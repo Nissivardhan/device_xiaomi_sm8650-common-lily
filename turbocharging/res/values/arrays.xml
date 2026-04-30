@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string-array name="turbo_modes_entries">
+        <item>18W</item>
+        <item>33W</item>
+        <item>45W</item>
+        <item>60W</item>
+        <item>90W</item>
+    </string-array>
+    <string-array name="turbo_modes_values">
+        <item>1800000</item>
+        <item>3500000</item>
+        <item>4090000</item>
+        <item>6000000</item>
+        <item>9750000</item>
+    </string-array>
+</resources>

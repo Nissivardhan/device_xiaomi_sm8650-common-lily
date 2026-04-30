@@ -262,7 +262,8 @@ PRODUCT_PACKAGES += \
 
 # Parts
 PRODUCT_PACKAGES += \
-    XiaomiParts
+    XiaomiParts \
+    XiaomiTurboCharging
 
 # Partitions
 PRODUCT_BUILD_SUPER_PARTITION := false
@@ -440,3 +441,4 @@ PRODUCT_PACKAGES += \
 # WiFi Display
 PRODUCT_PACKAGES += \
     libwfdaac_vendor
+
