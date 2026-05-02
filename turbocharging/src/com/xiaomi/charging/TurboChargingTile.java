@@ -14,7 +14,7 @@ public class TurboChargingTile extends TileService {
     @Override
     public void onClick() {
         SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(this);
-        boolean newState = !prefs.getBoolean(Constants.PREF_TURBO_ENABLED, false);
+        boolean newState = !prefs.getBoolean(Constants.PREF_TURBO_ENABLED, true);
         prefs.edit().putBoolean(Constants.PREF_TURBO_ENABLED, newState).apply();
         TurboChargingUtil.applyAllFromPrefs(this);
         updateTile();
@@ -33,7 +33,7 @@ public class TurboChargingTile extends TileService {
         Tile tile = getQsTile();
         if (tile == null) return;
         boolean enabled = PreferenceManager.getDefaultSharedPreferences(this)
-                .getBoolean(Constants.PREF_TURBO_ENABLED, false);
+                .getBoolean(Constants.PREF_TURBO_ENABLED, true);
         tile.setState(enabled ? Tile.STATE_ACTIVE : Tile.STATE_INACTIVE);
         tile.updateTile();
     }

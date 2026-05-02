@@ -31,7 +31,7 @@ public final class TurboChargingUtil {
 
     public static void applyAllFromPrefs(Context ctx) {
         SharedPreferences p = PreferenceManager.getDefaultSharedPreferences(ctx);
-        boolean enabled = p.getBoolean(Constants.PREF_TURBO_ENABLED, false);
+        boolean enabled = p.getBoolean(Constants.PREF_TURBO_ENABLED, true);
         String watt    = p.getString(Constants.PREF_TURBO_CURRENT, Constants.DEFAULT_ON_VALUE);
         boolean sports = p.getBoolean(Constants.PREF_SPORTS_MODE, false) && enabled;
         applyTurbo(ctx, enabled, watt);

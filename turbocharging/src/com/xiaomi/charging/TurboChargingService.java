@@ -4,29 +4,31 @@
 package com.xiaomi.charging;
 
 import android.app.Service;
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.os.IBinder;
-import android.os.UEventObserver;
 import android.util.Log;
 
 public class TurboChargingService extends Service {
     private static final String TAG = "TurboCharging";
-    private UEventObserver mObserver;
+
+    private final BroadcastReceiver mPowerReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (Intent.ACTION_POWER_CONNECTED.equals(intent.getAction())) {
+                Log.i(TAG, "power connected — re-applying turbo settings");
+                TurboChargingUtil.applyAllFromPrefs(context);
+            }
+        }
+    };
 
     @Override
     public void onCreate() {
         super.onCreate();
-        mObserver = new UEventObserver() {
-            @Override
-            public void onUEvent(UEvent event) {
-                String online = event.get("POWER_SUPPLY_ONLINE");
-                if ("1".equals(online)) {
-                    Log.i(TAG, "USB online — re-applying turbo settings");
-                    TurboChargingUtil.applyAllFromPrefs(TurboChargingService.this);
-                }
-            }
-        };
-        mObserver.startObserving("DEVPATH=/sys/class/power_supply/usb");
+        IntentFilter f = new IntentFilter(Intent.ACTION_POWER_CONNECTED);
+        registerReceiver(mPowerReceiver, f, Context.RECEIVER_NOT_EXPORTED);
         TurboChargingUtil.applyAllFromPrefs(this);
     }
 
@@ -38,7 +40,7 @@ public class TurboChargingService extends Service {
 
     @Override
     public void onDestroy() {
-        if (mObserver != null) mObserver.stopObserving();
+        try { unregisterReceiver(mPowerReceiver); } catch (IllegalArgumentException e) {}
         super.onDestroy();
     }
 
