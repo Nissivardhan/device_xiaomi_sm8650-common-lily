@@ -441,3 +441,6 @@ persist.vendor.vcb.enable=false
 ro.vendor.net.enable_dual_wifi=1
 ro.vendor.net.enable_passpoint_r1=1
 wifi.aware.interface=wifi-aware0
+
+# Sensors
+ro.vendor.sensors.xiaomi.udfps=true
