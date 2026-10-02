@@ -63,19 +63,8 @@ public class BootCompletedReceiver extends BroadcastReceiver {
 
         updateTapToWakeStatus(context);
 
-        // Screen off UDFPS
-        ContentObserver screenOffUdfpsObserver = new ContentObserver(new Handler()) {
-            @Override
-            public void onChange(boolean selfChange) {
-                updateScreenOffUdfpsStatus(context);
-            }
-        };
-
-        context.getContentResolver().registerContentObserver(
-                Settings.Secure.getUriFor(Settings.Secure.SCREEN_OFF_UNLOCK_UDFPS_ENABLED), true,
-                screenOffUdfpsObserver);
-
-        updateScreenOffUdfpsStatus(context);
+        // Screen off UDFPS (always on)
+        enableScreenOffUdfps();
     }
 
     private void initTouchFeature() {
@@ -107,18 +96,15 @@ public class BootCompletedReceiver extends BroadcastReceiver {
         }
     }
 
-    private void updateScreenOffUdfpsStatus(Context context) {
+    private void enableScreenOffUdfps() {
         try {
             initTouchFeature();
 
-            int value = Settings.Secure.getInt(context.getContentResolver(),
-                                Settings.Secure.SCREEN_OFF_UNLOCK_UDFPS_ENABLED, 0)
-                    == 1 ? 1 : 0;
-            xiaomiTouchFeatureAidl.setTouchMode(0, TOUCH_FOD_ENABLE_MODE, value);
-            xiaomiTouchFeatureAidl.setTouchMode(0, TOUCH_AOD_ENABLE_MODE, value);
-            xiaomiTouchFeatureAidl.setTouchMode(0, TOUCH_FODICON_ENABLE_MODE, value);
+            xiaomiTouchFeatureAidl.setTouchMode(0, TOUCH_FOD_ENABLE_MODE, 1);
+            xiaomiTouchFeatureAidl.setTouchMode(0, TOUCH_AOD_ENABLE_MODE, 1);
+            xiaomiTouchFeatureAidl.setTouchMode(0, TOUCH_FODICON_ENABLE_MODE, 1);
         } catch (Exception e) {
-            Log.e(TAG, "Failed to update screen off UDFPS status", e);
+            Log.e(TAG, "Failed to enable screen off UDFPS", e);
         }
     }
 }
