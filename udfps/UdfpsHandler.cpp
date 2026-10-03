@@ -18,7 +18,6 @@
 
 #define COMMAND_NIT 10
 #define PARAM_NIT_FOD 1
-#define PARAM_NIT_FOD_LOW_BRIGHTNESS 6
 #define PARAM_NIT_NONE 0
 
 #define COMMAND_FOD_PRESS_STATUS 1
@@ -37,8 +36,11 @@
 #define FINGERPRINT_ACQUIRED_VENDOR 7
 
 #define BACKLIGHT_POWER_PATH "/sys/class/backlight/panel0-backlight/bl_power"
-// With the screen off, the panel allows local HBM ~235-270 ms after finger down.
+// With the screen off, the panel allows local HBM ~235-270 ms after finger down, and a
+// local HBM request sent before that is accepted but never lit.
 #define LHBM_SCREEN_OFF_DELAY_MS 300
+// Time for the spot to light after the request (~12 ms with the screen on).
+#define LHBM_ON_DELAY_MS 30
 
 using ::aidl::android::hardware::biometrics::fingerprint::AcquiredInfo;
 
@@ -119,17 +121,20 @@ class XiaomiSM8650UdfpsHander : public UdfpsHandler {
 
         bool screenOff = isScreenOff();
 
-        // Request local HBM first, and only tell the sensor it is lit once the panel had
-        // time to power on, otherwise the first capture from screen off is a dark image.
         set(DISP_PARAM_PATH, std::string(DISP_PARAM_LOCAL_HBM_MODE) + " " + DISP_PARAM_LOCAL_HBM_ON);
         if (screenOff) {
+            // The request above is dropped while the panel powers on: wait for it to be
+            // allowed, request local HBM again and give the spot time to light before
+            // telling the sensor, otherwise the first capture is unlit.
             std::this_thread::sleep_for(std::chrono::milliseconds(LHBM_SCREEN_OFF_DELAY_MS));
+            set(DISP_PARAM_PATH,
+                std::string(DISP_PARAM_LOCAL_HBM_MODE) + " " + DISP_PARAM_LOCAL_HBM_OFF);
+            set(DISP_PARAM_PATH,
+                std::string(DISP_PARAM_LOCAL_HBM_MODE) + " " + DISP_PARAM_LOCAL_HBM_ON);
+            std::this_thread::sleep_for(std::chrono::milliseconds(LHBM_ON_DELAY_MS));
         }
 
-        // Waking from screen off the panel is in doze and lights the low brightness
-        // (110 nit) spot, so the sensor has to expect that or the capture is too dark.
-        mDevice->extCmd(mDevice, COMMAND_NIT,
-                        screenOff ? PARAM_NIT_FOD_LOW_BRIGHTNESS : PARAM_NIT_FOD);
+        mDevice->extCmd(mDevice, COMMAND_NIT, PARAM_NIT_FOD);
         mDevice->extCmd(mDevice, COMMAND_FOD_PRESS_STATUS, PARAM_FOD_PRESSED);
     }
 };
