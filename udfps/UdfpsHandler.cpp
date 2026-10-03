@@ -18,6 +18,7 @@
 
 #define COMMAND_NIT 10
 #define PARAM_NIT_FOD 1
+#define PARAM_NIT_FOD_LOW_BRIGHTNESS 6
 #define PARAM_NIT_NONE 0
 
 #define COMMAND_FOD_PRESS_STATUS 1
@@ -36,9 +37,8 @@
 #define FINGERPRINT_ACQUIRED_VENDOR 7
 
 #define BACKLIGHT_POWER_PATH "/sys/class/backlight/panel0-backlight/bl_power"
-// With the screen off, the panel allows local HBM ~235-270 ms after finger down and the
-// spot then needs time to reach full brightness, otherwise captures are too dim to match.
-#define LHBM_SCREEN_OFF_DELAY_MS 500
+// With the screen off, the panel allows local HBM ~235-270 ms after finger down.
+#define LHBM_SCREEN_OFF_DELAY_MS 300
 
 using ::aidl::android::hardware::biometrics::fingerprint::AcquiredInfo;
 
@@ -126,7 +126,10 @@ class XiaomiSM8650UdfpsHander : public UdfpsHandler {
             std::this_thread::sleep_for(std::chrono::milliseconds(LHBM_SCREEN_OFF_DELAY_MS));
         }
 
-        mDevice->extCmd(mDevice, COMMAND_NIT, PARAM_NIT_FOD);
+        // Waking from screen off the panel is in doze and lights the low brightness
+        // (110 nit) spot, so the sensor has to expect that or the capture is too dark.
+        mDevice->extCmd(mDevice, COMMAND_NIT,
+                        screenOff ? PARAM_NIT_FOD_LOW_BRIGHTNESS : PARAM_NIT_FOD);
         mDevice->extCmd(mDevice, COMMAND_FOD_PRESS_STATUS, PARAM_FOD_PRESSED);
     }
 };
