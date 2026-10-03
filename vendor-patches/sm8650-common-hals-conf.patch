@@ -1,0 +1,12 @@
+diff --git a/proprietary/vendor/etc/sensors/hals.conf b/proprietary/vendor/etc/sensors/hals.conf
+index a1b77ba..f2f680f 100644
+--- a/proprietary/vendor/etc/sensors/hals.conf
++++ b/proprietary/vendor/etc/sensors/hals.conf
+@@ -2,4 +2,5 @@ sensors.ultrasoundproximity.so
+ sensors.dynamic_sensor_hal.so
+ sensors.qsh.so
+ sensors.touch.detect.so
+-vl53l8.hal@2.0.so
+\ No newline at end of file
++vl53l8.hal@2.0.so
++sensors.xiaomi.v2.so
