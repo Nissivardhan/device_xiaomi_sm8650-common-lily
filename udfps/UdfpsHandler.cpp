@@ -36,8 +36,9 @@
 #define FINGERPRINT_ACQUIRED_VENDOR 7
 
 #define BACKLIGHT_POWER_PATH "/sys/class/backlight/panel0-backlight/bl_power"
-// With the screen off, the panel needs ~250 ms to power on before local HBM is lit.
-#define LHBM_SCREEN_OFF_DELAY_MS 300
+// With the screen off, the panel allows local HBM ~235-270 ms after finger down and the
+// spot then needs time to reach full brightness, otherwise captures are too dim to match.
+#define LHBM_SCREEN_OFF_DELAY_MS 500
 
 using ::aidl::android::hardware::biometrics::fingerprint::AcquiredInfo;
 
