@@ -78,6 +78,7 @@ ro.vendor.audio.soundtrigger.appdefine.vop.level=10
 ro.vendor.audio.soundtrigger.lowpower=true
 ro.vendor.audio.soundtrigger.permian=1
 ro.vendor.audio.soundtrigger.snr=-100
+ro.vendor.audio.soundtrigger.qcom1st.sva=true
 ro.vendor.audio.soundtrigger.sva-7.0=1
 ro.vendor.audio.soundtrigger.wakeupword=3
 ro.vendor.audio.soundtrigger.training.level=50
