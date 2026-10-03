@@ -25,3 +25,5 @@ set_prop(hal_fingerprint_default, vendor_fp_info_prop)
 add_service(hal_fingerprint_default, vendor_hal_fingerprint_service_xiaomi)
 
 binder_call(hal_fingerprint_default, vendor_hal_perf_default)
+allow hal_fingerprint_default vendor_sysfs_graphics:dir r_dir_perms;
+allow hal_fingerprint_default vendor_sysfs_graphics:file r_file_perms;
