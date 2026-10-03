@@ -35,3 +35,9 @@ ro.hardware.wlan.vendor=qcom
 
 # Zygote
 persist.device_config.runtime_native.usap_pool_enabled=true
+
+#Xiaomi 14 System Properties
+ro.infinity.soc=Snapdragon® 8 Gen 3
+ro.infinity.battery=4610 mAh
+ro.infinity.display=1200 x 2670, 120 Hz
+ro.infinity.camera=50MP + 50MP + 50MP
