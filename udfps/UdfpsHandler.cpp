@@ -10,7 +10,9 @@
 #include <android-base/logging.h>
 #include <android-base/unique_fd.h>
 
+#include <chrono>
 #include <fstream>
+#include <thread>
 
 #include "UdfpsHandler.h"
 
@@ -33,6 +35,10 @@
 
 #define FINGERPRINT_ACQUIRED_VENDOR 7
 
+#define BACKLIGHT_POWER_PATH "/sys/class/backlight/panel0-backlight/bl_power"
+// With the screen off, the panel needs ~250 ms to power on before local HBM is lit.
+#define LHBM_SCREEN_OFF_DELAY_MS 300
+
 using ::aidl::android::hardware::biometrics::fingerprint::AcquiredInfo;
 
 namespace {
@@ -41,6 +47,13 @@ template <typename T>
 static void set(const std::string& path, const T& value) {
     std::ofstream file(path);
     file << value;
+}
+
+static bool isScreenOff() {
+    std::ifstream file(BACKLIGHT_POWER_PATH);
+    int value = 0;
+    file >> value;
+    return value != 0;
 }
 
 }  // anonymous namespace
@@ -96,15 +109,24 @@ class XiaomiSM8650UdfpsHander : public UdfpsHandler {
     }
 
     void setFingerDown(bool pressed) {
-        mDevice->extCmd(mDevice, COMMAND_NIT, pressed ? PARAM_NIT_FOD : PARAM_NIT_NONE);
-
-        set(DISP_PARAM_PATH,
-            std::string(DISP_PARAM_LOCAL_HBM_MODE) + " " +
-                    (pressed ? DISP_PARAM_LOCAL_HBM_ON : DISP_PARAM_LOCAL_HBM_OFF));
-
-        if (pressed) {
-            mDevice->extCmd(mDevice, COMMAND_FOD_PRESS_STATUS, PARAM_FOD_PRESSED);
+        if (!pressed) {
+            mDevice->extCmd(mDevice, COMMAND_NIT, PARAM_NIT_NONE);
+            set(DISP_PARAM_PATH,
+                std::string(DISP_PARAM_LOCAL_HBM_MODE) + " " + DISP_PARAM_LOCAL_HBM_OFF);
+            return;
         }
+
+        bool screenOff = isScreenOff();
+
+        // Request local HBM first, and only tell the sensor it is lit once the panel had
+        // time to power on, otherwise the first capture from screen off is a dark image.
+        set(DISP_PARAM_PATH, std::string(DISP_PARAM_LOCAL_HBM_MODE) + " " + DISP_PARAM_LOCAL_HBM_ON);
+        if (screenOff) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(LHBM_SCREEN_OFF_DELAY_MS));
+        }
+
+        mDevice->extCmd(mDevice, COMMAND_NIT, PARAM_NIT_FOD);
+        mDevice->extCmd(mDevice, COMMAND_FOD_PRESS_STATUS, PARAM_FOD_PRESSED);
     }
 };
 
