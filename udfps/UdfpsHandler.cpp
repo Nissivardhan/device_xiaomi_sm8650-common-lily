@@ -68,6 +68,12 @@ class XiaomiSM8650UdfpsHander : public UdfpsHandler {
     }
 
     void onFingerDown(uint32_t /*x*/, uint32_t /*y*/, float /*minor*/, float /*major*/) {
+        if (mAuthenticated) {
+            // A finger still resting on the sensor after unlocking (e.g. from AOD) sends one
+            // more finger down that is never followed by a finger up, leaving local HBM on.
+            LOG(INFO) << __func__ << " ignored, already authenticated";
+            return;
+        }
         LOG(INFO) << __func__;
         setFingerDown(true);
     }
@@ -89,6 +95,7 @@ class XiaomiSM8650UdfpsHander : public UdfpsHandler {
              * vendorCode = 21 waiting for fingerprint authentication
              * vendorCode = 23 waiting for fingerprint enroll
              */
+            mAuthenticated = false;
             setFodStatus(FOD_STATUS_ON);
         } else if (vendorCode == 44) {
             /*
@@ -98,14 +105,27 @@ class XiaomiSM8650UdfpsHander : public UdfpsHandler {
         }
     }
 
+    void onAuthenticationSucceeded() {
+        LOG(INFO) << __func__;
+        mAuthenticated = true;
+        setFingerDown(false);
+    }
+
+    void onAuthenticationFailed() {
+        LOG(INFO) << __func__;
+        setFingerDown(false);
+    }
+
     void cancel() {
         LOG(INFO) << __func__;
+        mAuthenticated = false;
         setFingerDown(false);
         setFodStatus(FOD_STATUS_OFF);
     }
 
   private:
     fingerprint_device_t* mDevice;
+    bool mAuthenticated = false;
 
     void setFodStatus(int value) {
         set(FOD_STATUS_PATH, value);
