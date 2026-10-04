@@ -42,6 +42,9 @@ public class DozeBrightnessService extends Service {
     /* xiaomi.sensor.aod: 3 = very dark, 4 = bright, 5 = dark */
     private static final int AOD_SENSOR_BRIGHT = 4;
 
+    /* The AOD sensor only reports changes; until it does, pick the level from lux */
+    private static final float BRIGHT_LUX_THRESHOLD = 20.0f;
+
     /* Let the panel finish its doze transition before overriding the level */
     private static final long APPLY_DELAY_MS = 500;
 
@@ -49,8 +52,10 @@ public class DozeBrightnessService extends Service {
     private DisplayManager mDisplayManager;
     private SensorManager mSensorManager;
     private Sensor mAodSensor;
+    private Sensor mLightSensor;
     private boolean mDozing;
     private boolean mSensorRegistered;
+    private boolean mLightSensorRegistered;
     private int mLevel = -1;
 
     private final Runnable mApplyRunnable = this::applyLevel;
@@ -84,6 +89,21 @@ public class DozeBrightnessService extends Service {
         public void onAccuracyChanged(Sensor sensor, int accuracy) {}
     };
 
+    private final SensorEventListener mLightListener = new SensorEventListener() {
+        @Override
+        public void onSensorChanged(SensorEvent event) {
+            setLightSensorEnabled(false);
+            if (mLevel >= 0) return;
+            final float lux = event.values[0];
+            mLevel = lux >= BRIGHT_LUX_THRESHOLD ? DOZE_BRIGHTNESS_HIGH : DOZE_BRIGHTNESS_LOW;
+            if (DEBUG) Log.d(TAG, "initial lux " + lux + " -> level " + mLevel);
+            applyLevel();
+        }
+
+        @Override
+        public void onAccuracyChanged(Sensor sensor, int accuracy) {}
+    };
+
     @Override
     public void onCreate() {
         super.onCreate();
@@ -100,6 +120,7 @@ public class DozeBrightnessService extends Service {
             stopSelf();
             return;
         }
+        mLightSensor = mSensorManager.getDefaultSensor(Sensor.TYPE_LIGHT);
         mDisplayManager.registerDisplayListener(mDisplayListener, mHandler);
         updateDozeState();
     }
@@ -113,6 +134,7 @@ public class DozeBrightnessService extends Service {
     public void onDestroy() {
         mDisplayManager.unregisterDisplayListener(mDisplayListener);
         setSensorEnabled(false);
+        setLightSensorEnabled(false);
         mHandler.removeCallbacks(mApplyRunnable);
         super.onDestroy();
     }
@@ -129,6 +151,7 @@ public class DozeBrightnessService extends Service {
         if (DEBUG) Log.d(TAG, "display state " + state + ", dozing=" + mDozing);
 
         setSensorEnabled(mDozing);
+        setLightSensorEnabled(mDozing && mLevel < 0);
         mHandler.removeCallbacks(mApplyRunnable);
         if (mDozing) {
             mHandler.postDelayed(mApplyRunnable, APPLY_DELAY_MS);
@@ -144,6 +167,17 @@ public class DozeBrightnessService extends Service {
             mSensorManager.unregisterListener(mSensorListener);
         }
         mSensorRegistered = enabled;
+    }
+
+    private void setLightSensorEnabled(boolean enabled) {
+        if (mLightSensor == null || enabled == mLightSensorRegistered) return;
+        if (enabled) {
+            mSensorManager.registerListener(mLightListener, mLightSensor,
+                    SensorManager.SENSOR_DELAY_NORMAL, mHandler);
+        } else {
+            mSensorManager.unregisterListener(mLightListener);
+        }
+        mLightSensorRegistered = enabled;
     }
 
     private void applyLevel() {
