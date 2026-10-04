@@ -2,3 +2,7 @@ Patches for the vendor blob repo that this tree expects.
 Apply from the ROM source root:
 
     git -C vendor/xiaomi/sm8650-common apply $(pwd)/device/xiaomi/sm8650-common/vendor-patches/sm8650-common-hals-conf.patch
+
+    # displayfeature.default.so -> libtinyxml2_1.so (fixes displayfeature crash), apply in order:
+    git -C vendor/xiaomi/sm8650-common apply $(pwd)/device/xiaomi/sm8650-common/vendor-patches/sm8650-common-displayfeature-tinyxml2-1-blob.patch
+    git -C vendor/xiaomi/sm8650-common apply $(pwd)/device/xiaomi/sm8650-common/vendor-patches/sm8650-common-displayfeature-tinyxml2-2-bp.patch
