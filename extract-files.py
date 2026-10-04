@@ -96,6 +96,8 @@ blob_fixups: blob_fixups_user_type = {
         'vendor/bin/poweropt-service',
     ): blob_fixup()
         .replace_needed('libtinyxml2.so', 'libtinyxml2-v34.so'),
+    'odm/lib64/hw/displayfeature.default.so': blob_fixup()
+        .replace_needed('libtinyxml2.so', 'libtinyxml2_1.so'),
     (
         'vendor/lib64/libVoiceSdk.so',
         'vendor/lib64/libcapiv2uvvendor.so',
