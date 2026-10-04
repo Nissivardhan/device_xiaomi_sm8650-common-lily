@@ -16,6 +16,7 @@ import android.hardware.display.DisplayManager;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.util.Log;
 import android.view.Display;
 
@@ -52,12 +53,15 @@ public class DozeBrightnessService extends Service {
     private static final int AOD_SENSOR_VERY_DARK = 3;
     private static final int AOD_SENSOR_BRIGHT = 4;
 
-    /* The AOD sensor only reports changes; until it does, pick the level from lux */
+    /* The AOD sensor only reports changes; each doze session starts from lux */
     private static final float LOW_LUX_THRESHOLD = 2.0f;
     private static final float HIGH_LUX_THRESHOLD = 50.0f;
 
     /* Let the panel finish its doze transition before overriding the level */
     private static final long APPLY_DELAY_MS = 500;
+
+    /* The AOD sensor reports a stale value as soon as it is enabled; skip it */
+    private static final long AOD_SENSOR_SETTLE_MS = 1500;
 
     private final Handler mHandler = new Handler(Looper.getMainLooper());
     private DisplayManager mDisplayManager;
@@ -68,6 +72,7 @@ public class DozeBrightnessService extends Service {
     private boolean mSensorRegistered;
     private boolean mLightSensorRegistered;
     private int mLevel = -1;
+    private long mAodSensorEnabledTime;
 
     private final Runnable mApplyRunnable = this::applyLevel;
 
@@ -90,6 +95,9 @@ public class DozeBrightnessService extends Service {
     private final SensorEventListener mSensorListener = new SensorEventListener() {
         @Override
         public void onSensorChanged(SensorEvent event) {
+            if (SystemClock.uptimeMillis() - mAodSensorEnabledTime < AOD_SENSOR_SETTLE_MS) {
+                return;
+            }
             final int value = (int) event.values[0];
             mLevel = value == AOD_SENSOR_BRIGHT ? LEVEL_HIGH
                     : value == AOD_SENSOR_VERY_DARK ? LEVEL_LOW : LEVEL_MID;
@@ -105,7 +113,6 @@ public class DozeBrightnessService extends Service {
         @Override
         public void onSensorChanged(SensorEvent event) {
             setLightSensorEnabled(false);
-            if (mLevel >= 0) return;
             final float lux = event.values[0];
             mLevel = lux >= HIGH_LUX_THRESHOLD ? LEVEL_HIGH
                     : lux < LOW_LUX_THRESHOLD ? LEVEL_LOW : LEVEL_MID;
@@ -133,7 +140,10 @@ public class DozeBrightnessService extends Service {
             stopSelf();
             return;
         }
-        mLightSensor = mSensorManager.getDefaultSensor(Sensor.TYPE_LIGHT);
+        mLightSensor = mSensorManager.getDefaultSensor(Sensor.TYPE_LIGHT, true /* wakeUp */);
+        if (mLightSensor == null) {
+            mLightSensor = mSensorManager.getDefaultSensor(Sensor.TYPE_LIGHT);
+        }
         mDisplayManager.registerDisplayListener(mDisplayListener, mHandler);
         updateDozeState();
     }
@@ -164,7 +174,8 @@ public class DozeBrightnessService extends Service {
         if (DEBUG) Log.d(TAG, "display state " + state + ", dozing=" + mDozing);
 
         setSensorEnabled(mDozing);
-        setLightSensorEnabled(mDozing && mLevel < 0);
+        // Every doze session starts from a fresh lux reading
+        setLightSensorEnabled(mDozing);
         mHandler.removeCallbacks(mApplyRunnable);
         if (mDozing) {
             mHandler.postDelayed(mApplyRunnable, APPLY_DELAY_MS);
@@ -174,6 +185,7 @@ public class DozeBrightnessService extends Service {
     private void setSensorEnabled(boolean enabled) {
         if (enabled == mSensorRegistered) return;
         if (enabled) {
+            mAodSensorEnabledTime = SystemClock.uptimeMillis();
             mSensorManager.registerListener(mSensorListener, mAodSensor,
                     SensorManager.SENSOR_DELAY_NORMAL, mHandler);
         } else {
