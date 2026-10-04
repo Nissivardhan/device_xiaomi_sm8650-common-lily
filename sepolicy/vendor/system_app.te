@@ -23,3 +23,7 @@ allow system_app self:netlink_kobject_uevent_socket { create read bind getopt se
 
 # Thermal
 get_prop(system_app, vendor_thermal_normal_prop)
+
+# AOD brightness (XiaomiParts DozeBrightnessService)
+allow system_app vendor_sysfs_displayfeature:dir search;
+allow system_app vendor_sysfs_displayfeature:file rw_file_perms;

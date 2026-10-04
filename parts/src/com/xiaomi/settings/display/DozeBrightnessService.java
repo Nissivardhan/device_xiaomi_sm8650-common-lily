@@ -1,0 +1,157 @@
+/*
+ * Copyright (C) 2026 The LineageOS Project
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+package com.xiaomi.settings.display;
+
+import android.app.Service;
+import android.content.Intent;
+import android.hardware.Sensor;
+import android.hardware.SensorEvent;
+import android.hardware.SensorEventListener;
+import android.hardware.SensorManager;
+import android.hardware.display.DisplayManager;
+import android.os.Handler;
+import android.os.IBinder;
+import android.os.Looper;
+import android.util.Log;
+import android.view.Display;
+
+import java.io.FileWriter;
+import java.io.IOException;
+
+/**
+ * Drives the panel's own AOD brightness while dozing. In DOZE/DOZE_SUSPEND the
+ * panel ignores the regular backlight and only honours doze_brightness, which
+ * the kernel resets to "normal" on every doze transition.
+ */
+public class DozeBrightnessService extends Service {
+    private static final String TAG = "XiaomiPartsDozeBrightness";
+    private static final boolean DEBUG = false;
+
+    private static final String DOZE_BRIGHTNESS_NODE =
+            "/sys/devices/virtual/mi_display/disp_feature/disp-DSI-0/doze_brightness";
+    private static final String AOD_SENSOR_TYPE = "xiaomi.sensor.aod";
+
+    /* doze_brightness values (mi_dsi_panel_set_doze_brightness) */
+    private static final int DOZE_BRIGHTNESS_HIGH = 1;
+    private static final int DOZE_BRIGHTNESS_LOW = 2;
+
+    /* xiaomi.sensor.aod: 3 = very dark, 4 = bright, 5 = dark */
+    private static final int AOD_SENSOR_BRIGHT = 4;
+
+    /* Let the panel finish its doze transition before overriding the level */
+    private static final long APPLY_DELAY_MS = 500;
+
+    private final Handler mHandler = new Handler(Looper.getMainLooper());
+    private DisplayManager mDisplayManager;
+    private SensorManager mSensorManager;
+    private Sensor mAodSensor;
+    private boolean mDozing;
+    private boolean mSensorRegistered;
+    private int mLevel = -1;
+
+    private final Runnable mApplyRunnable = this::applyLevel;
+
+    private final DisplayManager.DisplayListener mDisplayListener =
+            new DisplayManager.DisplayListener() {
+        @Override
+        public void onDisplayAdded(int displayId) {}
+
+        @Override
+        public void onDisplayRemoved(int displayId) {}
+
+        @Override
+        public void onDisplayChanged(int displayId) {
+            if (displayId == Display.DEFAULT_DISPLAY) {
+                updateDozeState();
+            }
+        }
+    };
+
+    private final SensorEventListener mSensorListener = new SensorEventListener() {
+        @Override
+        public void onSensorChanged(SensorEvent event) {
+            final int value = (int) event.values[0];
+            mLevel = value == AOD_SENSOR_BRIGHT ? DOZE_BRIGHTNESS_HIGH : DOZE_BRIGHTNESS_LOW;
+            if (DEBUG) Log.d(TAG, "aod sensor: " + value + " -> level " + mLevel);
+            applyLevel();
+        }
+
+        @Override
+        public void onAccuracyChanged(Sensor sensor, int accuracy) {}
+    };
+
+    @Override
+    public void onCreate() {
+        super.onCreate();
+        mDisplayManager = getSystemService(DisplayManager.class);
+        mSensorManager = getSystemService(SensorManager.class);
+        for (Sensor sensor : mSensorManager.getSensorList(Sensor.TYPE_ALL)) {
+            if (AOD_SENSOR_TYPE.equals(sensor.getStringType())) {
+                mAodSensor = sensor;
+                break;
+            }
+        }
+        if (mAodSensor == null) {
+            Log.e(TAG, "No " + AOD_SENSOR_TYPE + " sensor, stopping");
+            stopSelf();
+            return;
+        }
+        mDisplayManager.registerDisplayListener(mDisplayListener, mHandler);
+        updateDozeState();
+    }
+
+    @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {
+        return START_STICKY;
+    }
+
+    @Override
+    public void onDestroy() {
+        mDisplayManager.unregisterDisplayListener(mDisplayListener);
+        setSensorEnabled(false);
+        mHandler.removeCallbacks(mApplyRunnable);
+        super.onDestroy();
+    }
+
+    @Override
+    public IBinder onBind(Intent intent) {
+        return null;
+    }
+
+    private void updateDozeState() {
+        final Display display = mDisplayManager.getDisplay(Display.DEFAULT_DISPLAY);
+        final int state = display != null ? display.getState() : Display.STATE_UNKNOWN;
+        mDozing = state == Display.STATE_DOZE || state == Display.STATE_DOZE_SUSPEND;
+        if (DEBUG) Log.d(TAG, "display state " + state + ", dozing=" + mDozing);
+
+        setSensorEnabled(mDozing);
+        mHandler.removeCallbacks(mApplyRunnable);
+        if (mDozing) {
+            mHandler.postDelayed(mApplyRunnable, APPLY_DELAY_MS);
+        }
+    }
+
+    private void setSensorEnabled(boolean enabled) {
+        if (enabled == mSensorRegistered) return;
+        if (enabled) {
+            mSensorManager.registerListener(mSensorListener, mAodSensor,
+                    SensorManager.SENSOR_DELAY_NORMAL, mHandler);
+        } else {
+            mSensorManager.unregisterListener(mSensorListener);
+        }
+        mSensorRegistered = enabled;
+    }
+
+    private void applyLevel() {
+        if (!mDozing || mLevel < 0) return;
+        try (FileWriter writer = new FileWriter(DOZE_BRIGHTNESS_NODE)) {
+            writer.write(String.valueOf(mLevel));
+        } catch (IOException e) {
+            Log.e(TAG, "Failed to write " + DOZE_BRIGHTNESS_NODE, e);
+        }
+    }
+}
