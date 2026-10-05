@@ -16,12 +16,14 @@ import android.hardware.display.DisplayManager;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.os.SystemClock;
 import android.util.Log;
 import android.view.Display;
 
 import java.io.FileWriter;
 import java.io.IOException;
+import java.util.ArrayDeque;
 
 /**
  * Drives the panel's own AOD brightness while dozing. In doze the panel ignores the regular
@@ -29,9 +31,10 @@ import java.io.IOException;
  * display power transition. The panel has three idle-mode levels (register 0x6d), the kernel only
  * exposes two through doze_brightness, so the level is also set directly.
  *
- * The level is chosen from lux: once when the doze session starts, and again whenever the AOD
- * sensor reports a change in ambient light (it only reports changes, and its own coarse values
- * are not used). The panel is only rewritten when the level actually changes.
+ * Each doze session starts at the last level right away. While dozing, the wake-up light sensor
+ * is batched by the sensor hub so lux is followed at low power: readings are averaged over a short
+ * window and a new level is only applied once it has held for a few seconds. The panel is only
+ * rewritten when the level actually changes.
  */
 public class DozeBrightnessService extends Service {
     private static final String TAG = "XiaomiPartsDozeBrightness";
@@ -41,7 +44,6 @@ public class DozeBrightnessService extends Service {
             "/sys/devices/virtual/mi_display/disp_feature/disp-DSI-0/";
     private static final String DOZE_BRIGHTNESS_NODE = DISP_FEATURE_DIR + "doze_brightness";
     private static final String MIPI_RW_NODE = DISP_FEATURE_DIR + "mipi_rw";
-    private static final String AOD_SENSOR_TYPE = "xiaomi.sensor.aod";
 
     /* doze_brightness values (mi_dsi_panel_set_doze_brightness) */
     private static final int DOZE_BRIGHTNESS_HIGH = 1;
@@ -64,27 +66,33 @@ public class DozeBrightnessService extends Service {
     /* Let the panel finish its doze transition before setting the level */
     private static final long APPLY_DELAY_MS = 500;
 
-    /* The AOD sensor reports a stale value as soon as it is enabled; skip it */
-    private static final long AOD_SENSOR_SETTLE_MS = 1500;
+    /* Light sensor batching: sample every second, wake the CPU at most every 5 s */
+    private static final int LIGHT_SAMPLING_US = 1000000;
+    private static final int LIGHT_MAX_LATENCY_US = 5000000;
 
-    /* Wait for the light to settle after the AOD sensor reports a change */
-    private static final long LIGHT_CHANGE_DELAY_MS = 2000;
+    /* Lux is averaged over this window */
+    private static final long AVERAGE_WINDOW_MS = 4000;
+
+    /* A new level has to hold this long before it is applied */
+    private static final long STABLE_MS = 3000;
 
     private final Handler mHandler = new Handler(Looper.getMainLooper());
     private DisplayManager mDisplayManager;
     private SensorManager mSensorManager;
-    private Sensor mAodSensor;
     private Sensor mLightSensor;
+    private PowerManager.WakeLock mWakeLock;
     private boolean mDozing;
-    private boolean mAodSensorRegistered;
     private boolean mLightSensorRegistered;
     private int mDisplayState = Display.STATE_UNKNOWN;
     private int mLevel = LEVEL_UNKNOWN;
     private int mAppliedLevel = LEVEL_UNKNOWN;
-    private long mAodSensorEnabledTime;
+    private int mPendingLevel = LEVEL_UNKNOWN;
+
+    /* {event time ms, lux} readings inside the averaging window */
+    private final ArrayDeque<float[]> mReadings = new ArrayDeque<>();
 
     private final Runnable mApplyRunnable = this::applyLevel;
-    private final Runnable mSampleLightRunnable = () -> setLightSensorEnabled(mDozing);
+    private final Runnable mConfirmRunnable = this::confirmPendingLevel;
 
     private final DisplayManager.DisplayListener mDisplayListener =
             new DisplayManager.DisplayListener() {
@@ -102,33 +110,10 @@ public class DozeBrightnessService extends Service {
         }
     };
 
-    private final SensorEventListener mAodSensorListener = new SensorEventListener() {
-        @Override
-        public void onSensorChanged(SensorEvent event) {
-            if (SystemClock.uptimeMillis() - mAodSensorEnabledTime < AOD_SENSOR_SETTLE_MS) {
-                return;
-            }
-            if (DEBUG) Log.d(TAG, "aod sensor: " + event.values[0]);
-            // Ambient light changed: re-read lux once it has settled
-            mHandler.removeCallbacks(mSampleLightRunnable);
-            mHandler.postDelayed(mSampleLightRunnable, LIGHT_CHANGE_DELAY_MS);
-        }
-
-        @Override
-        public void onAccuracyChanged(Sensor sensor, int accuracy) {}
-    };
-
     private final SensorEventListener mLightListener = new SensorEventListener() {
         @Override
         public void onSensorChanged(SensorEvent event) {
-            setLightSensorEnabled(false);
-            final float lux = event.values[0];
-            mLevel = levelForLux(lux, mLevel);
-            if (DEBUG) Log.d(TAG, "lux " + lux + " -> level " + mLevel);
-            // While the panel is still settling, the pending apply picks the level up
-            if (!mHandler.hasCallbacks(mApplyRunnable)) {
-                applyLevel();
-            }
+            onLux(event.timestamp / 1000000L, event.values[0]);
         }
 
         @Override
@@ -140,12 +125,6 @@ public class DozeBrightnessService extends Service {
         super.onCreate();
         mDisplayManager = getSystemService(DisplayManager.class);
         mSensorManager = getSystemService(SensorManager.class);
-        for (Sensor sensor : mSensorManager.getSensorList(Sensor.TYPE_ALL)) {
-            if (AOD_SENSOR_TYPE.equals(sensor.getStringType())) {
-                mAodSensor = sensor;
-                break;
-            }
-        }
         mLightSensor = mSensorManager.getDefaultSensor(Sensor.TYPE_LIGHT, true /* wakeUp */);
         if (mLightSensor == null) {
             mLightSensor = mSensorManager.getDefaultSensor(Sensor.TYPE_LIGHT);
@@ -155,6 +134,9 @@ public class DozeBrightnessService extends Service {
             stopSelf();
             return;
         }
+        mWakeLock = getSystemService(PowerManager.class)
+                .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, TAG);
+        mWakeLock.setReferenceCounted(false);
         mDisplayManager.registerDisplayListener(mDisplayListener, mHandler);
         updateDozeState();
     }
@@ -166,11 +148,10 @@ public class DozeBrightnessService extends Service {
 
     @Override
     public void onDestroy() {
-        mDisplayManager.unregisterDisplayListener(mDisplayListener);
-        setAodSensorEnabled(false);
-        setLightSensorEnabled(false);
-        mHandler.removeCallbacks(mApplyRunnable);
-        mHandler.removeCallbacks(mSampleLightRunnable);
+        if (mLightSensor != null) {
+            mDisplayManager.unregisterDisplayListener(mDisplayListener);
+            stopDozeSession();
+        }
         super.onDestroy();
     }
 
@@ -209,41 +190,89 @@ public class DozeBrightnessService extends Service {
         mAppliedLevel = LEVEL_UNKNOWN;
         mHandler.removeCallbacks(mApplyRunnable);
         if (!mDozing) {
-            mHandler.removeCallbacks(mSampleLightRunnable);
-            setAodSensorEnabled(false);
-            setLightSensorEnabled(false);
+            stopDozeSession();
             return;
         }
         if (!wasDozing) {
-            // New doze session: start from a fresh lux reading
-            mLevel = LEVEL_UNKNOWN;
-            setAodSensorEnabled(true);
+            // New doze session: keep the last level, the light sensor corrects it
+            mReadings.clear();
             setLightSensorEnabled(true);
         }
         mHandler.postDelayed(mApplyRunnable, APPLY_DELAY_MS);
     }
 
-    private void setAodSensorEnabled(boolean enabled) {
-        if (mAodSensor == null || enabled == mAodSensorRegistered) return;
-        if (enabled) {
-            mAodSensorEnabledTime = SystemClock.uptimeMillis();
-            mSensorManager.registerListener(mAodSensorListener, mAodSensor,
-                    SensorManager.SENSOR_DELAY_NORMAL, mHandler);
-        } else {
-            mSensorManager.unregisterListener(mAodSensorListener);
-        }
-        mAodSensorRegistered = enabled;
+    private void stopDozeSession() {
+        mHandler.removeCallbacks(mApplyRunnable);
+        mHandler.removeCallbacks(mConfirmRunnable);
+        mPendingLevel = LEVEL_UNKNOWN;
+        setLightSensorEnabled(false);
+        mWakeLock.release();
     }
 
     private void setLightSensorEnabled(boolean enabled) {
         if (enabled == mLightSensorRegistered) return;
         if (enabled) {
             mSensorManager.registerListener(mLightListener, mLightSensor,
-                    SensorManager.SENSOR_DELAY_NORMAL, mHandler);
+                    LIGHT_SAMPLING_US, LIGHT_MAX_LATENCY_US, mHandler);
         } else {
             mSensorManager.unregisterListener(mLightListener);
         }
         mLightSensorRegistered = enabled;
+    }
+
+    private void onLux(long timeMs, float lux) {
+        if (!mDozing) return;
+        mReadings.addLast(new float[] { timeMs, lux });
+        while (timeMs - (long) mReadings.peekFirst()[0] > AVERAGE_WINDOW_MS) {
+            mReadings.removeFirst();
+        }
+        final float avg = averageLux();
+        final int candidate = levelForLux(avg, mLevel);
+        if (DEBUG) Log.d(TAG, "lux " + lux + " avg " + avg + " -> " + candidate);
+
+        if (mLevel == LEVEL_UNKNOWN) {
+            // First reading ever, nothing to keep stable
+            setLevel(candidate);
+        } else if (candidate == mLevel) {
+            cancelPendingLevel();
+        } else if (candidate != mPendingLevel) {
+            // Only apply the new level if it still holds after STABLE_MS
+            mPendingLevel = candidate;
+            mWakeLock.acquire(STABLE_MS + 1000);
+            mHandler.removeCallbacks(mConfirmRunnable);
+            mHandler.postDelayed(mConfirmRunnable, STABLE_MS);
+        }
+    }
+
+    private float averageLux() {
+        if (mReadings.isEmpty()) return 0;
+        float sum = 0;
+        for (float[] reading : mReadings) {
+            sum += reading[1];
+        }
+        return sum / mReadings.size();
+    }
+
+    private void confirmPendingLevel() {
+        if (mDozing && mPendingLevel != LEVEL_UNKNOWN
+                && levelForLux(averageLux(), mLevel) == mPendingLevel) {
+            setLevel(mPendingLevel);
+        }
+        cancelPendingLevel();
+    }
+
+    private void cancelPendingLevel() {
+        mPendingLevel = LEVEL_UNKNOWN;
+        mHandler.removeCallbacks(mConfirmRunnable);
+        mWakeLock.release();
+    }
+
+    private void setLevel(int level) {
+        mLevel = level;
+        // While the panel is still settling, the pending apply picks the level up
+        if (!mHandler.hasCallbacks(mApplyRunnable)) {
+            applyLevel();
+        }
     }
 
     private void applyLevel() {
