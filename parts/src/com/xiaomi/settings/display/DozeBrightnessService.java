@@ -32,9 +32,10 @@ import java.util.ArrayDeque;
  * exposes two through doze_brightness, so the level is also set directly.
  *
  * Each doze session starts at the last level right away. While dozing, the wake-up light sensor
- * is batched by the sensor hub so lux is followed at low power: readings are averaged over a short
- * window and a new level is only applied once it has held for a few seconds. The panel is only
- * rewritten when the level actually changes.
+ * is batched by the sensor hub so lux is followed at low power. Brightening follows the latest
+ * reading after a short confirmation so the AOD stays readable; dimming uses lux averaged over a
+ * short window and has to hold for a few seconds. The panel is only rewritten when the level
+ * actually changes.
  */
 public class DozeBrightnessService extends Service {
     private static final String TAG = "XiaomiPartsDozeBrightness";
@@ -66,15 +67,17 @@ public class DozeBrightnessService extends Service {
     /* Let the panel finish its doze transition before setting the level */
     private static final long APPLY_DELAY_MS = 500;
 
-    /* Light sensor batching: sample every second, wake the CPU at most every 5 s */
+    /* Light sensor batching: sample every second, wake the CPU at most every 2 s */
     private static final int LIGHT_SAMPLING_US = 1000000;
-    private static final int LIGHT_MAX_LATENCY_US = 5000000;
+    private static final int LIGHT_MAX_LATENCY_US = 2000000;
 
     /* Lux is averaged over this window */
     private static final long AVERAGE_WINDOW_MS = 4000;
 
-    /* A new level has to hold this long before it is applied */
-    private static final long STABLE_MS = 3000;
+    /* A new level has to hold this long before it is applied. Brightening follows the latest
+     * reading and is quick so the AOD stays readable, dimming is averaged and slower */
+    private static final long STABLE_UP_MS = 1000;
+    private static final long STABLE_DOWN_MS = 3000;
 
     private final Handler mHandler = new Handler(Looper.getMainLooper());
     private DisplayManager mDisplayManager;
@@ -87,6 +90,7 @@ public class DozeBrightnessService extends Service {
     private int mLevel = LEVEL_UNKNOWN;
     private int mAppliedLevel = LEVEL_UNKNOWN;
     private int mPendingLevel = LEVEL_UNKNOWN;
+    private float mLastLux;
 
     /* {event time ms, lux} readings inside the averaging window */
     private final ArrayDeque<float[]> mReadings = new ArrayDeque<>();
@@ -226,22 +230,39 @@ public class DozeBrightnessService extends Service {
         while (timeMs - (long) mReadings.peekFirst()[0] > AVERAGE_WINDOW_MS) {
             mReadings.removeFirst();
         }
+        mLastLux = lux;
         final float avg = averageLux();
-        final int candidate = levelForLux(avg, mLevel);
-        if (DEBUG) Log.d(TAG, "lux " + lux + " avg " + avg + " -> " + candidate);
+        if (DEBUG) Log.d(TAG, "lux " + lux + " avg " + avg + " level " + mLevel);
 
         if (mLevel == LEVEL_UNKNOWN) {
             // First reading ever, nothing to keep stable
-            setLevel(candidate);
-        } else if (candidate == mLevel) {
+            setLevel(levelForLux(avg, mLevel));
+            return;
+        }
+        final int brighter = levelForLux(lux, mLevel);
+        if (brighter > mLevel) {
+            // Brighter: keep a running brighten timer, only move its target up
+            if (mPendingLevel > mLevel) {
+                mPendingLevel = Math.max(mPendingLevel, brighter);
+            } else {
+                schedulePendingLevel(brighter, STABLE_UP_MS);
+            }
+            return;
+        }
+        final int candidate = levelForLux(avg, mLevel);
+        if (candidate >= mLevel) {
             cancelPendingLevel();
         } else if (candidate != mPendingLevel) {
-            // Only apply the new level if it still holds after STABLE_MS
-            mPendingLevel = candidate;
-            mWakeLock.acquire(STABLE_MS + 1000);
-            mHandler.removeCallbacks(mConfirmRunnable);
-            mHandler.postDelayed(mConfirmRunnable, STABLE_MS);
+            schedulePendingLevel(candidate, STABLE_DOWN_MS);
         }
+    }
+
+    private void schedulePendingLevel(int level, long delayMs) {
+        // Only apply the new level if it still holds after delayMs
+        mPendingLevel = level;
+        mWakeLock.acquire(delayMs + 1000);
+        mHandler.removeCallbacks(mConfirmRunnable);
+        mHandler.postDelayed(mConfirmRunnable, delayMs);
     }
 
     private float averageLux() {
@@ -254,9 +275,13 @@ public class DozeBrightnessService extends Service {
     }
 
     private void confirmPendingLevel() {
-        if (mDozing && mPendingLevel != LEVEL_UNKNOWN
-                && levelForLux(averageLux(), mLevel) == mPendingLevel) {
-            setLevel(mPendingLevel);
+        if (mDozing && mPendingLevel != LEVEL_UNKNOWN) {
+            if (mPendingLevel > mLevel) {
+                final int level = levelForLux(mLastLux, mLevel);
+                if (level > mLevel) setLevel(level);
+            } else if (levelForLux(averageLux(), mLevel) == mPendingLevel) {
+                setLevel(mPendingLevel);
+            }
         }
         cancelPendingLevel();
     }
