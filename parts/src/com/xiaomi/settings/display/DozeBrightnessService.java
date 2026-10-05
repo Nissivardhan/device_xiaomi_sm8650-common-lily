@@ -24,66 +24,63 @@ import java.io.FileWriter;
 import java.io.IOException;
 
 /**
- * Drives the panel's own AOD brightness while dozing. In doze the panel ignores the regular
- * backlight and only honours its idle-mode level, which the kernel resets to "normal" on every
- * display power transition. The panel has three idle-mode levels (register 0x6d), the kernel only
- * exposes two through doze_brightness, so the level is also set directly.
+ * Ambient-light based AOD brightness.
  *
- * The level is chosen from lux: once when the doze session starts, and again whenever the AOD
- * sensor reports a change in ambient light (it only reports changes, and its own coarse values
- * are not used). The panel is only rewritten when the level actually changes.
+ * In doze the panel stays in its low power idle mode (doze_brightness) but still takes the
+ * regular backlight level, so the AOD brightness can follow the room continuously. Lux is
+ * averaged over a short window, sampled when the doze session starts, when the AOD sensor
+ * reports a light change and about once a minute, and the brightness only moves when the
+ * target changes meaningfully, with a short ramp instead of a jump.
  */
 public class DozeBrightnessService extends Service {
     private static final String TAG = "XiaomiPartsDozeBrightness";
     private static final boolean DEBUG = false;
 
-    private static final String DISP_FEATURE_DIR =
-            "/sys/devices/virtual/mi_display/disp_feature/disp-DSI-0/";
-    private static final String DOZE_BRIGHTNESS_NODE = DISP_FEATURE_DIR + "doze_brightness";
-    private static final String MIPI_RW_NODE = DISP_FEATURE_DIR + "mipi_rw";
+    private static final String DOZE_BRIGHTNESS_NODE =
+            "/sys/devices/virtual/mi_display/disp_feature/disp-DSI-0/doze_brightness";
+    private static final String BACKLIGHT_NODE =
+            "/sys/class/backlight/panel0-backlight/brightness";
     private static final String AOD_SENSOR_TYPE = "xiaomi.sensor.aod";
 
-    /* doze_brightness values (mi_dsi_panel_set_doze_brightness) */
-    private static final int DOZE_BRIGHTNESS_HIGH = 1;
-    private static final int DOZE_BRIGHTNESS_LOW = 2;
+    /* doze_brightness: 2 = low power idle mode */
+    private static final String DOZE_IDLE_MODE = "2";
 
-    /* AOD levels; the panel picks its idle-mode brightness from register 0x6d */
-    private static final int LEVEL_UNKNOWN = -1;
-    private static final int LEVEL_LOW = 0;
-    private static final int LEVEL_MID = 1;
-    private static final int LEVEL_HIGH = 2;
-    private static final String[] LEVEL_REG = { "02", "01", "00" };
+    /* Lux -> backlight curve (0..4095), interpolated on log(lux + 1) */
+    private static final float[] CURVE_LUX = { 0f, 5f, 30f, 150f, 800f, 5000f };
+    private static final int[] CURVE_LEVEL = { 6, 20, 45, 100, 220, 450 };
 
-    /* Lux thresholds with hysteresis, so light around a threshold does not bounce the level */
-    private static final float LOW_TO_MID_LUX = 3.0f;
-    private static final float MID_TO_LOW_LUX = 1.5f;
-    private static final float MID_TO_HIGH_LUX = 60.0f;
-    private static final float HIGH_TO_MID_LUX = 40.0f;
+    /* Only move when the target differs by more than this from the current level */
+    private static final float CHANGE_THRESHOLD = 0.2f;
+    private static final int MIN_LEVEL_DELTA = 3;
 
     /* Let the panel finish its doze transition before setting the level */
-    private static final long APPLY_DELAY_MS = 500;
-
+    private static final long ENTER_DELAY_MS = 500;
     /* The AOD sensor reports a stale value as soon as it is enabled; skip it */
     private static final long AOD_SENSOR_SETTLE_MS = 1500;
-
-    /* Wait for the light to settle after the AOD sensor reports a change */
-    private static final long LIGHT_CHANGE_DELAY_MS = 2000;
+    /* Average lux over this window */
+    private static final long SAMPLE_WINDOW_MS = 2000;
+    /* Re-sample periodically; only runs when the CPU is awake anyway (e.g. the AOD clock tick) */
+    private static final long RESAMPLE_INTERVAL_MS = 60000;
+    /* Ramp to a new level instead of jumping */
+    private static final int RAMP_STEPS = 8;
+    private static final long RAMP_STEP_MS = 100;
 
     private final Handler mHandler = new Handler(Looper.getMainLooper());
     private DisplayManager mDisplayManager;
     private SensorManager mSensorManager;
     private Sensor mAodSensor;
     private Sensor mLightSensor;
+    private int mDisplayState = Display.STATE_UNKNOWN;
     private boolean mDozing;
     private boolean mAodSensorRegistered;
-    private boolean mLightSensorRegistered;
-    private int mDisplayState = Display.STATE_UNKNOWN;
-    private int mLevel = LEVEL_UNKNOWN;
-    private int mAppliedLevel = LEVEL_UNKNOWN;
+    private boolean mSampling;
     private long mAodSensorEnabledTime;
-
-    private final Runnable mApplyRunnable = this::applyLevel;
-    private final Runnable mSampleLightRunnable = () -> setLightSensorEnabled(mDozing);
+    private float mLuxSum;
+    private int mLuxCount;
+    private int mLevel = -1;
+    private int mRampFrom;
+    private int mRampTo;
+    private int mRampStep;
 
     private final DisplayManager.DisplayListener mDisplayListener =
             new DisplayManager.DisplayListener() {
@@ -108,9 +105,7 @@ public class DozeBrightnessService extends Service {
                 return;
             }
             if (DEBUG) Log.d(TAG, "aod sensor: " + event.values[0]);
-            // Ambient light changed: re-read lux once it has settled
-            mHandler.removeCallbacks(mSampleLightRunnable);
-            mHandler.postDelayed(mSampleLightRunnable, LIGHT_CHANGE_DELAY_MS);
+            startSampling();
         }
 
         @Override
@@ -120,18 +115,42 @@ public class DozeBrightnessService extends Service {
     private final SensorEventListener mLightListener = new SensorEventListener() {
         @Override
         public void onSensorChanged(SensorEvent event) {
-            setLightSensorEnabled(false);
-            final float lux = event.values[0];
-            mLevel = levelForLux(lux, mLevel);
-            if (DEBUG) Log.d(TAG, "lux " + lux + " -> level " + mLevel);
-            // While the panel is still settling, the pending apply picks the level up
-            if (!mHandler.hasCallbacks(mApplyRunnable)) {
-                applyLevel();
-            }
+            mLuxSum += event.values[0];
+            mLuxCount++;
         }
 
         @Override
         public void onAccuracyChanged(Sensor sensor, int accuracy) {}
+    };
+
+    private final Runnable mEnterRunnable = () -> {
+        writeNode(DOZE_BRIGHTNESS_NODE, DOZE_IDLE_MODE);
+        if (mLevel >= 0) {
+            // Restore the session level right away, the kernel reset it on the transition
+            writeNode(BACKLIGHT_NODE, String.valueOf(mLevel));
+        }
+        startSampling();
+    };
+
+    private final Runnable mFinishSampleRunnable = this::finishSampling;
+
+    private final Runnable mResampleRunnable = () -> {
+        if (mDozing) {
+            startSampling();
+        }
+    };
+
+    private final Runnable mRampRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (!mDozing) return;
+            mRampStep++;
+            final int level = mRampFrom + (mRampTo - mRampFrom) * mRampStep / RAMP_STEPS;
+            writeNode(BACKLIGHT_NODE, String.valueOf(level));
+            if (mRampStep < RAMP_STEPS) {
+                mHandler.postDelayed(this, RAMP_STEP_MS);
+            }
+        }
     };
 
     @Override
@@ -166,33 +185,13 @@ public class DozeBrightnessService extends Service {
     @Override
     public void onDestroy() {
         mDisplayManager.unregisterDisplayListener(mDisplayListener);
-        setAodSensorEnabled(false);
-        setLightSensorEnabled(false);
-        mHandler.removeCallbacks(mApplyRunnable);
-        mHandler.removeCallbacks(mSampleLightRunnable);
+        stopDozeSession();
         super.onDestroy();
     }
 
     @Override
     public IBinder onBind(Intent intent) {
         return null;
-    }
-
-    private static int levelForLux(float lux, int current) {
-        switch (current) {
-            case LEVEL_LOW:
-                return lux > MID_TO_HIGH_LUX ? LEVEL_HIGH : lux > LOW_TO_MID_LUX ? LEVEL_MID
-                        : LEVEL_LOW;
-            case LEVEL_MID:
-                return lux > MID_TO_HIGH_LUX ? LEVEL_HIGH : lux < MID_TO_LOW_LUX ? LEVEL_LOW
-                        : LEVEL_MID;
-            case LEVEL_HIGH:
-                return lux < MID_TO_LOW_LUX ? LEVEL_LOW : lux < HIGH_TO_MID_LUX ? LEVEL_MID
-                        : LEVEL_HIGH;
-            default:
-                return lux >= MID_TO_HIGH_LUX ? LEVEL_HIGH : lux < LOW_TO_MID_LUX ? LEVEL_LOW
-                        : LEVEL_MID;
-        }
     }
 
     private void updateDozeState() {
@@ -204,22 +203,26 @@ public class DozeBrightnessService extends Service {
         mDozing = state == Display.STATE_DOZE || state == Display.STATE_DOZE_SUSPEND;
         if (DEBUG) Log.d(TAG, "display state " + state + ", dozing=" + mDozing);
 
-        // The kernel resets the panel level on every power transition
-        mAppliedLevel = LEVEL_UNKNOWN;
-        mHandler.removeCallbacks(mApplyRunnable);
         if (!mDozing) {
-            mHandler.removeCallbacks(mSampleLightRunnable);
-            setAodSensorEnabled(false);
-            setLightSensorEnabled(false);
+            stopDozeSession();
             return;
         }
         if (!wasDozing) {
-            // New doze session: start from a fresh lux reading
-            mLevel = LEVEL_UNKNOWN;
+            // New doze session: starts at the last level, a fresh reading ramps from there
             setAodSensorEnabled(true);
-            setLightSensorEnabled(true);
         }
-        mHandler.postDelayed(mApplyRunnable, APPLY_DELAY_MS);
+        // The kernel resets the panel on every power transition: re-apply once it settles
+        mHandler.removeCallbacks(mEnterRunnable);
+        mHandler.postDelayed(mEnterRunnable, ENTER_DELAY_MS);
+    }
+
+    private void stopDozeSession() {
+        mHandler.removeCallbacks(mEnterRunnable);
+        mHandler.removeCallbacks(mResampleRunnable);
+        mHandler.removeCallbacks(mRampRunnable);
+        mHandler.removeCallbacks(mFinishSampleRunnable);
+        stopLightSensor();
+        setAodSensorEnabled(false);
     }
 
     private void setAodSensorEnabled(boolean enabled) {
@@ -234,28 +237,66 @@ public class DozeBrightnessService extends Service {
         mAodSensorRegistered = enabled;
     }
 
-    private void setLightSensorEnabled(boolean enabled) {
-        if (enabled == mLightSensorRegistered) return;
-        if (enabled) {
-            mSensorManager.registerListener(mLightListener, mLightSensor,
-                    SensorManager.SENSOR_DELAY_NORMAL, mHandler);
-        } else {
-            mSensorManager.unregisterListener(mLightListener);
-        }
-        mLightSensorRegistered = enabled;
+    private void startSampling() {
+        if (!mDozing || mSampling) return;
+        mHandler.removeCallbacks(mResampleRunnable);
+        mLuxSum = 0;
+        mLuxCount = 0;
+        mSampling = true;
+        mSensorManager.registerListener(mLightListener, mLightSensor,
+                SensorManager.SENSOR_DELAY_NORMAL, mHandler);
+        mHandler.postDelayed(mFinishSampleRunnable, SAMPLE_WINDOW_MS);
     }
 
-    private void applyLevel() {
-        if (!mDozing || mLevel == LEVEL_UNKNOWN || mLevel == mAppliedLevel) return;
-        // Let the kernel enter its doze mode, then set the exact panel level: the kernel only
-        // knows high/low and skips writes it thinks are already applied (e.g. mid -> low).
-        writeNode(DOZE_BRIGHTNESS_NODE, String.valueOf(
-                mLevel == LEVEL_HIGH ? DOZE_BRIGHTNESS_HIGH : DOZE_BRIGHTNESS_LOW));
-        writeNode(MIPI_RW_NODE, "00 00 00 39 00 00 40 00 00 03 f0 aa 1b");
-        writeNode(MIPI_RW_NODE, "00 00 00 15 00 00 40 00 00 02 6d " + LEVEL_REG[mLevel]);
-        writeNode(MIPI_RW_NODE, "00 00 00 39 00 00 40 00 00 03 f0 aa 10");
-        writeNode(MIPI_RW_NODE, "00 00 00 15 00 00 00 00 00 02 cf 09");
-        mAppliedLevel = mLevel;
+    private void stopLightSensor() {
+        if (!mSampling) return;
+        mSensorManager.unregisterListener(mLightListener);
+        mSampling = false;
+    }
+
+    private void finishSampling() {
+        stopLightSensor();
+        if (!mDozing) return;
+        if (mLuxCount > 0) {
+            final float lux = mLuxSum / mLuxCount;
+            final int target = levelForLux(lux);
+            if (DEBUG) Log.d(TAG, "lux " + lux + " (" + mLuxCount + ") -> " + target);
+            if (mLevel < 0) {
+                setLevel(target, false);
+            } else if (Math.abs(target - mLevel) >= MIN_LEVEL_DELTA
+                    && Math.abs(target - mLevel) > mLevel * CHANGE_THRESHOLD) {
+                setLevel(target, true);
+            }
+        }
+        mHandler.postDelayed(mResampleRunnable, RESAMPLE_INTERVAL_MS);
+    }
+
+    private void setLevel(int level, boolean ramp) {
+        mHandler.removeCallbacks(mRampRunnable);
+        if (ramp && mLevel >= 0) {
+            mRampFrom = mLevel;
+            mRampTo = level;
+            mRampStep = 0;
+            mHandler.post(mRampRunnable);
+        } else {
+            writeNode(BACKLIGHT_NODE, String.valueOf(level));
+        }
+        mLevel = level;
+    }
+
+    private static int levelForLux(float lux) {
+        final double x = Math.log1p(Math.max(0f, lux));
+        if (lux <= CURVE_LUX[0]) return CURVE_LEVEL[0];
+        for (int i = 1; i < CURVE_LUX.length; i++) {
+            if (lux <= CURVE_LUX[i]) {
+                final double x0 = Math.log1p(CURVE_LUX[i - 1]);
+                final double x1 = Math.log1p(CURVE_LUX[i]);
+                final double t = (x - x0) / (x1 - x0);
+                return (int) Math.round(CURVE_LEVEL[i - 1]
+                        + t * (CURVE_LEVEL[i] - CURVE_LEVEL[i - 1]));
+            }
+        }
+        return CURVE_LEVEL[CURVE_LEVEL.length - 1];
     }
 
     private static void writeNode(String path, String value) {
