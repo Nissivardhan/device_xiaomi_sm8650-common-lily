@@ -5,15 +5,6 @@
 //
 
 cc_library_shared {
-    name: "libcodec2_hidl_shim",
-    srcs: ["libcodec2_hidl_shim.cpp"],
-    shared_libs: [
-        "libcodec2_hidl@1.0",
-    ],
-    vendor: true,
-}
-
-cc_library_shared {
     name: "libshim",
     shared_libs: [
         "libui",
