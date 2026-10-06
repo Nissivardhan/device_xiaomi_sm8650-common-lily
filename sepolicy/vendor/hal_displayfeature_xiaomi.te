@@ -31,7 +31,7 @@ binder_call(vendor_hal_displayfeature_xiaomi_default, system_server)
 binder_call(vendor_hal_displayfeature_xiaomi_default, vndservicemanager)
 
 get_prop(vendor_hal_displayfeature_xiaomi_default, hwservicemanager_prop)
-get_prop(vendor_hal_displayfeature_xiaomi_default, vendor_displayfeature_prop)
+set_prop(vendor_hal_displayfeature_xiaomi_default, vendor_displayfeature_prop)
 get_prop(vendor_hal_displayfeature_xiaomi_default, vendor_display_prop)
 
 init_daemon_domain(vendor_hal_displayfeature_xiaomi_default)
