@@ -24,7 +24,7 @@ import java.util.Map;
 
 public class ColorModeService extends Service {
     private static final String TAG = "XiaomiPartsColorModeService";
-    private static final boolean DEBUG = true;
+    private static final boolean DEBUG = false;
 
     private static final int DEFAULT_COLOR_MODE = SystemProperties.getInt(
             "persist.sys.sf.native_mode", 0);
