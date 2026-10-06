@@ -7,11 +7,7 @@ audio.deep_buffer.media=true
 audio.offload.video=true
 audio.spatializer.pose_predictor_type=2
 audio.spatializer.prediction_duration_ms=50
-audio.sys.noisy.broadcast.delay=600
-audio.sys.offload.pstimeout.secs=3
 debug.config.media.video.frc.support=true
-persist.audio.button_jack.profile=volume
-persist.audio.button_jack.switch=0
 persist.audio.fluence.speaker=true
 persist.audio.fluence.voicecall=true
 persist.audio.fluence.voicecomm=true
@@ -31,7 +27,6 @@ persist.vendor.audio.ha_proxy.enabled=true
 persist.vendor.audio.induce_crash=false
 persist.vendor.audio.ras.enabled=false
 persist.vendor.audio.scheme.acdb=false
-persist.vendor.audio.spatializer.enable=true
 persist.vendor.audio.spv3.enable=true
 persist.vendor.audio.voicecall.speaker.stereo=true
 ro.af.client_heap_size_kbyte=7168
@@ -264,11 +259,7 @@ vendor.display.use_smooth_motion=0
 vendor.display.vds_allow_hwc=1
 
 # Dolby
-ro.vendor.audio.dolby.dax.support=true
-ro.vendor.audio.dolby.dax.version=DAX3_3.8.5.20_r1
 ro.vendor.audio.dolby.surround.enable=true
-ro.vendor.audio.dolby.vision.support=true
-ro.vendor.audio.feature.spatial=7
 
 # DPM
 persist.vendor.dpm.vndr.idletimer.mode=default
