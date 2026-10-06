@@ -27,7 +27,7 @@ import com.xiaomi.settings.display.DozeBrightnessService;
 
 public class BootCompletedReceiver extends BroadcastReceiver {
     private static final String TAG = "XiaomiParts";
-    private static final boolean DEBUG = true;
+    private static final boolean DEBUG = false;
     private static final int DOUBLE_TAP_TO_WAKE_MODE = 14;
     private static final int TOUCH_FOD_ENABLE_MODE = 10;
     private static final int TOUCH_AOD_ENABLE_MODE = 11;
