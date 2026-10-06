@@ -14,3 +14,8 @@ Apply from the ROM source root:
     # Dolby blobs: depend only on libstagefright_foundation-v33 (mixing it with the
     # platform libstagefright_foundation crashed the audio HAL in libhwdap):
     git -C vendor/xiaomi/sm8650-common apply $(pwd)/device/xiaomi/sm8650-common/vendor-patches/sm8650-common-dolby-foundation-v33.patch
+
+    # External Dolby (hardware/dolby from Tsaritsa-Prjkt, lineage-24.0): drop the Xiaomi Dolby
+    # modules it replaces and switch the effects to the software DAP. Needs hardware/dolby:
+    #   git clone -b lineage-24.0 https://github.com/Tsaritsa-Prjkt/android_hardware_dolby hardware/dolby
+    git -C vendor/xiaomi/sm8650-common apply $(pwd)/device/xiaomi/sm8650-common/vendor-patches/sm8650-common-dolby-external.patch
