@@ -31,11 +31,27 @@ public final class TurboChargingUtil {
 
     public static void applyAllFromPrefs(Context ctx) {
         SharedPreferences p = PreferenceManager.getDefaultSharedPreferences(ctx);
+        migrateOldDefault(p);
         boolean enabled = p.getBoolean(Constants.PREF_TURBO_ENABLED, true);
         String watt    = p.getString(Constants.PREF_TURBO_CURRENT, Constants.DEFAULT_ON_VALUE);
         boolean sports = p.getBoolean(Constants.PREF_SPORTS_MODE, false) && enabled;
         applyTurbo(ctx, enabled, watt);
         applySportsMode(ctx, sports);
+    }
+
+    /*
+     * The wattage used to default to the 18W value, and the stored value outlives updates, so
+     * such devices kept charging at 18W. Move it to the current default once; a later choice of
+     * 18W is kept.
+     */
+    private static void migrateOldDefault(SharedPreferences p) {
+        if (p.getBoolean(Constants.PREF_DEFAULT_MIGRATED, false)) return;
+        SharedPreferences.Editor e = p.edit().putBoolean(Constants.PREF_DEFAULT_MIGRATED, true);
+        if (Constants.OLD_DEFAULT_ON_VALUE.equals(p.getString(Constants.PREF_TURBO_CURRENT, null))) {
+            e.putString(Constants.PREF_TURBO_CURRENT, Constants.DEFAULT_ON_VALUE);
+            Log.i(TAG, "migrated wattage from the old 18W default");
+        }
+        e.apply();
     }
 
     private static void writeNode(String path, String value) {
