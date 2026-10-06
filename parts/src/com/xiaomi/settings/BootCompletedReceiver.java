@@ -70,6 +70,20 @@ public class BootCompletedReceiver extends BroadcastReceiver {
 
         // Screen off UDFPS (always on)
         enableScreenOffUdfps();
+
+        // Circle to Search on navigation handle / home long press, on by default like on Pixels
+        enableSearchEntrypointsByDefault(context);
+    }
+
+    private void enableSearchEntrypointsByDefault(Context context) {
+        final ContentResolver resolver = context.getContentResolver();
+        for (String key : new String[] {"search_all_entrypoints_enabled",
+                "search_press_hold_nav_handle_enabled", "search_long_press_home_enabled"}) {
+            // Only when never set, so a user who turned it off keeps it off
+            if (Settings.Secure.getString(resolver, key) == null) {
+                Settings.Secure.putInt(resolver, key, 1);
+            }
+        }
     }
 
     private void initTouchFeature() {
