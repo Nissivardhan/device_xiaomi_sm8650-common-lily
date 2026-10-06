@@ -10,3 +10,7 @@ Apply from the ROM source root:
     # drop the "haptics output" mix port from both audio policy configs, so incoming calls
     # ring and vibrate while a Bluetooth headset is connected:
     git -C vendor/xiaomi/sm8650-common apply $(pwd)/device/xiaomi/sm8650-common/vendor-patches/sm8650-common-audio-no-haptics.patch
+
+    # Dolby blobs: depend only on libstagefright_foundation-v33 (mixing it with the
+    # platform libstagefright_foundation crashed the audio HAL in libhwdap):
+    git -C vendor/xiaomi/sm8650-common apply $(pwd)/device/xiaomi/sm8650-common/vendor-patches/sm8650-common-dolby-foundation-v33.patch

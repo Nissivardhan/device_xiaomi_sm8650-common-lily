@@ -83,9 +83,13 @@ blob_fixups: blob_fixups_user_type = {
     (
         'vendor/lib64/libdlbdsservice.so',
         'vendor/lib64/libdlbpreg.so',
+        'vendor/lib64/libswspatializer_ext.so',
         'vendor/lib64/soundfx/libdlbvol.so',
         'vendor/lib64/soundfx/libhwdap.so',
+        'vendor/lib64/soundfx/libswspatializer.so',
     ): blob_fixup()
+        .replace_needed('libstagefright_foundation.so', 'libstagefright_foundation-v33.so'),
+    'vendor/bin/hw/vendor.dolby.hardware.dms@2.0-service': blob_fixup()
         .add_needed('libstagefright_foundation-v33.so'),
     'vendor/lib64/libqcodec2_core.so': blob_fixup()
         .add_needed('libcodec2_shim.so'),
