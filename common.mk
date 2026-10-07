@@ -59,10 +59,9 @@ PRODUCT_PACKAGES += \
 # Audio
 SOONG_CONFIG_NAMESPACES += android_hardware_audio
 SOONG_CONFIG_android_hardware_audio += \
-    run_64bit \
-    skip_speaker_layout_channel_mask_field
+    run_64bit
 SOONG_CONFIG_android_hardware_audio_run_64bit := true
-SOONG_CONFIG_android_hardware_audio_skip_speaker_layout_channel_mask_field := true
+$(call soong_config_set_bool,android_hardware_audio,skip_speaker_layout_channel_mask_field,true)
 
 PRODUCT_PACKAGES += \
     android.hardware.audio@7.1-impl \
