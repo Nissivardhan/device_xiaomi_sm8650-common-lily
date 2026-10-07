@@ -1,33 +1,165 @@
 diff --git a/packages/SystemUI/src/com/android/systemui/statusbar/phone/CentralSurfacesImpl.java b/packages/SystemUI/src/com/android/systemui/statusbar/phone/CentralSurfacesImpl.java
-index 36363bb..b51cf10 100644
+index 36363bb..0f13f6b 100644
 --- a/packages/SystemUI/src/com/android/systemui/statusbar/phone/CentralSurfacesImpl.java
 +++ b/packages/SystemUI/src/com/android/systemui/statusbar/phone/CentralSurfacesImpl.java
-@@ -1161,9 +1161,25 @@ public class CentralSurfacesImpl implements CoreStartable, CentralSurfaces,
-         if (depthWallpaperView.getParent() == null) {
-             root.setClipChildren(false);
-             root.setClipToPadding(false);
--            View keyguardRootView = root.findViewById(R.id.keyguard_root_view);
--            int insertIndex = root.indexOfChild(keyguardRootView) + 1;
--            root.addView(depthWallpaperView, insertIndex);
-+            // Inside the keyguard root, ordered by Z rather than position: the subject goes over
-+            // the clock and the rest of the keyguard, but under the lock icon and the shortcuts.
-+            ViewGroup keyguardRootView = root.findViewById(R.id.keyguard_root_view);
-+            if (depthWallpaperView.getId() == View.NO_ID) {
-+                // ConstraintSet.applyTo() requires every child of the keyguard root to have an id
-+                depthWallpaperView.setId(View.generateViewId());
-+            }
-+            depthWallpaperView.setTranslationZ(0.1f);
-+            keyguardRootView.addView(depthWallpaperView);
-+            keyguardRootView.addOnLayoutChangeListener(
-+                    (kgRoot, kgL, kgT, kgR, kgB, kgOldL, kgOldT, kgOldR, kgOldB) -> {
-+                for (int raisedId : new int[] {R.id.device_entry_icon_view, R.id.start_button,
-+                        R.id.end_button}) {
-+                    View raised = kgRoot.findViewById(raisedId);
-+                    if (raised != null) {
-+                        raised.setTranslationZ(0.2f);
-+                    }
-+                }
-+            });
+@@ -221,6 +221,7 @@ import com.android.systemui.tuner.TunerService;
+ import com.android.systemui.util.DumpUtilsKt;
+ import com.android.systemui.util.ScrimUtils;
+ import com.android.systemui.util.WallpaperController;
++import com.android.systemui.util.DepthWallpaperOverlay;
+ import com.android.systemui.util.WallpaperDepthUtils;
+ import com.android.systemui.util.concurrency.DelayableExecutor;
+ import com.android.systemui.util.concurrency.MessageRouter;
+@@ -1164,6 +1165,9 @@ public class CentralSurfacesImpl implements CoreStartable, CentralSurfaces,
+             View keyguardRootView = root.findViewById(R.id.keyguard_root_view);
+             int insertIndex = root.indexOfChild(keyguardRootView) + 1;
+             root.addView(depthWallpaperView, insertIndex);
++            // Keep the lock icon and the shortcuts above the subject
++            DepthWallpaperOverlay.attach(root, depthWallpaperView,
++                    R.id.device_entry_icon_view, R.id.start_button, R.id.end_button);
          }
          ScrimUtils.get(mContext).setWallpaperDepthUtils(mWallpaperDepthUtils);
          // Trigger initial visibility update to ensure correct state on first keyguard show
+diff --git a/packages/SystemUI/src/com/android/systemui/util/DepthWallpaperOverlay.java b/packages/SystemUI/src/com/android/systemui/util/DepthWallpaperOverlay.java
+new file mode 100644
+index 0000000..1111d8a
+--- /dev/null
++++ b/packages/SystemUI/src/com/android/systemui/util/DepthWallpaperOverlay.java
+@@ -0,0 +1,137 @@
++/*
++ * SPDX-License-Identifier: Apache-2.0
++ */
++
++package com.android.systemui.util;
++
++import android.graphics.Canvas;
++import android.graphics.ColorFilter;
++import android.graphics.PixelFormat;
++import android.graphics.RecordingCanvas;
++import android.graphics.drawable.Drawable;
++import android.view.View;
++import android.view.ViewGroup;
++import android.view.ViewParent;
++import android.view.ViewTreeObserver;
++
++import java.util.Arrays;
++
++/**
++ * The depth wallpaper subject sits above the whole keyguard root, so it also covers the lock
++ * icon and the shortcuts. This draws those views a second time from the root overlay, above the
++ * subject, while it is showing. The views themselves stay where they are and keep handling
++ * touches; only their render nodes are drawn again, so their content updates without re-recording.
++ */
++public final class DepthWallpaperOverlay extends Drawable
++        implements ViewTreeObserver.OnPreDrawListener {
++
++    private final ViewGroup mRoot;
++    private final View mSubject;
++    private final int[] mIds;
++    private final int[] mRootLoc = new int[2];
++    private final int[] mParentLoc = new int[2];
++    // Per view: shown, parent x, parent y, parent alpha; plus whether the subject is shown
++    private final float[] mState;
++    private final float[] mLastState;
++
++    private DepthWallpaperOverlay(ViewGroup root, View subject, int[] ids) {
++        mRoot = root;
++        mSubject = subject;
++        mIds = ids;
++        mState = new float[ids.length * 4 + 1];
++        mLastState = new float[ids.length * 4 + 1];
++    }
++
++    /** Draws the views with the given ids above the subject, which must be a child of root. */
++    public static void attach(ViewGroup root, View subject, int... ids) {
++        DepthWallpaperOverlay overlay = new DepthWallpaperOverlay(root, subject, ids);
++        root.getOverlay().add(overlay);
++        root.getViewTreeObserver().addOnPreDrawListener(overlay);
++    }
++
++    private boolean isSubjectShown() {
++        return mSubject.isShown() && mSubject.getAlpha() > 0f;
++    }
++
++    /** Alpha of the view's ancestors below the root, which its render node does not carry. */
++    private float getAncestorAlpha(View parent) {
++        float alpha = 1f;
++        View v = parent;
++        while (v != null && v != mRoot) {
++            alpha *= v.getAlpha() * v.getTransitionAlpha();
++            ViewParent p = v.getParent();
++            v = p instanceof View ? (View) p : null;
++        }
++        return alpha;
++    }
++
++    private void computeState() {
++        Arrays.fill(mState, 0f);
++        if (!isSubjectShown()) {
++            return;
++        }
++        mState[mState.length - 1] = 1f;
++        mRoot.getLocationInWindow(mRootLoc);
++        for (int i = 0; i < mIds.length; i++) {
++            View view = mRoot.findViewById(mIds[i]);
++            if (view == null || !view.isShown() || !(view.getParent() instanceof View)) {
++                continue;
++            }
++            View parent = (View) view.getParent();
++            parent.getLocationInWindow(mParentLoc);
++            mState[i * 4] = 1f;
++            mState[i * 4 + 1] = mParentLoc[0] - mRootLoc[0] - parent.getScrollX();
++            mState[i * 4 + 2] = mParentLoc[1] - mRootLoc[1] - parent.getScrollY();
++            mState[i * 4 + 3] = getAncestorAlpha(parent);
++        }
++    }
++
++    @Override
++    public boolean onPreDraw() {
++        // Re-record only when placement or visibility changes, not every frame
++        computeState();
++        if (!Arrays.equals(mState, mLastState)) {
++            System.arraycopy(mState, 0, mLastState, 0, mState.length);
++            setBounds(0, 0, mRoot.getWidth(), mRoot.getHeight());
++            invalidateSelf();
++        }
++        return true;
++    }
++
++    @Override
++    public void draw(Canvas canvas) {
++        if (!(canvas instanceof RecordingCanvas) || mLastState[mLastState.length - 1] == 0f) {
++            return;
++        }
++        for (int i = 0; i < mIds.length; i++) {
++            if (mLastState[i * 4] == 0f || mLastState[i * 4 + 3] <= 0f) {
++                continue;
++            }
++            View view = mRoot.findViewById(mIds[i]);
++            if (view == null) {
++                continue;
++            }
++            float alpha = mLastState[i * 4 + 3];
++            int save = alpha < 1f
++                    ? canvas.saveLayerAlpha(0, 0, mRoot.getWidth(), mRoot.getHeight(),
++                            Math.round(alpha * 255))
++                    : canvas.save();
++            canvas.translate(mLastState[i * 4 + 1], mLastState[i * 4 + 2]);
++            ((RecordingCanvas) canvas).drawRenderNode(view.updateDisplayListIfDirty());
++            canvas.restoreToCount(save);
++        }
++    }
++
++    @Override
++    public void setAlpha(int alpha) {
++    }
++
++    @Override
++    public void setColorFilter(ColorFilter colorFilter) {
++    }
++
++    @Override
++    public int getOpacity() {
++        return PixelFormat.TRANSLUCENT;
++    }
++}
