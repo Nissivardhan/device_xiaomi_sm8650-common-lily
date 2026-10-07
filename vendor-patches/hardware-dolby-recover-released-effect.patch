@@ -1,0 +1,40 @@
+diff --git a/LunarisDolby/src/org/lunaris/dolby/data/DolbyRepository.kt b/LunarisDolby/src/org/lunaris/dolby/data/DolbyRepository.kt
+index 843e2c8..0dcb45e 100644
+--- a/LunarisDolby/src/org/lunaris/dolby/data/DolbyRepository.kt
++++ b/LunarisDolby/src/org/lunaris/dolby/data/DolbyRepository.kt
+@@ -57,10 +57,24 @@ class DolbyRepository(private val context: Context) : AutoCloseable {
+         }
+         
+         try {
+-            if (!dolbyEffect.hasControl()) {
++            // A released effect throws on every call, hasControl() included; treat it like lost
++            // control so a failed recreate below does not leave the repository stuck on it.
++            val lostControl = try {
++                !dolbyEffect.hasControl()
++            } catch (e: IllegalStateException) {
++                true
++            }
++            if (lostControl) {
+                 DolbyConstants.dlog(TAG, "Lost audio effect control, recreating")
+-                dolbyEffect.release()
+-                dolbyEffect = createDolbyEffect()
++                // Create the new effect first: if that fails, keep the old one instead of a
++                // released one, and retry on the next call.
++                val newEffect = createDolbyEffect()
++                try {
++                    dolbyEffect.release()
++                } catch (e: Exception) {
++                    DolbyConstants.dlog(TAG, "Error releasing old effect: ${e.message}")
++                }
++                dolbyEffect = newEffect
+                 if (!shouldBypassDolbyProcessing()) {
+                     restoreSavedProfileIfNeeded()
+                 }
+@@ -170,6 +184,7 @@ class DolbyRepository(private val context: Context) : AutoCloseable {
+         }
+ 
+         return try {
++            checkEffect()
+             dolbyEffect.dsOn
+         } catch (e: Exception) {
+             DolbyConstants.dlog(TAG, "Error getting Dolby enabled state: ${e.message}")
