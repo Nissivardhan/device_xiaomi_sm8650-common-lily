@@ -436,8 +436,3 @@ wifi.aware.interface=wifi-aware0
 
 # Sensors
 ro.vendor.sensors.xiaomi.udfps=true
-
-# Suspend
-# Stay awake briefly after resume: every resume wakes AlarmManager's clock-change
-# timerfd (EPOLLWAKEUP), and retrying sooner aborted suspend in a loop during AOD
-suspend.post_resume_min_stay_awake_time_millis=300
