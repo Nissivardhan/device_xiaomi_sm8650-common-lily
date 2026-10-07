@@ -1,0 +1,16 @@
+diff --git a/services/core/java/com/android/server/audio/AudioService.java b/services/core/java/com/android/server/audio/AudioService.java
+index 8ea1734..2925137 100644
+--- a/services/core/java/com/android/server/audio/AudioService.java
++++ b/services/core/java/com/android/server/audio/AudioService.java
+@@ -7159,9 +7159,9 @@ public class AudioService extends IAudioService.Stub
+         final int ringerMode = mRingerMode; // Read ringer mode as reading primitives is atomic
+         final boolean ringerModeMute = ringerMode == AudioManager.RINGER_MODE_VIBRATE
+                 || ringerMode == AudioManager.RINGER_MODE_SILENT;
+-        final boolean shouldRingSco = ringerMode == AudioManager.RINGER_MODE_VIBRATE
++        final boolean shouldRingSco = ringerModeMute
+                 && mBtCommDeviceActive.get() == BT_COMM_DEVICE_ACTIVE_SCO;
+-        final boolean shouldRingBle =  ringerMode == AudioManager.RINGER_MODE_VIBRATE
++        final boolean shouldRingBle =  ringerModeMute
+                 && (mBtCommDeviceActive.get() == BT_COMM_DEVICE_ACTIVE_BLE_HEADSET
+                 || mBtCommDeviceActive.get() == BT_COMM_DEVICE_ACTIVE_BLE_SPEAKER
+                 || mBtCommDeviceActive.get() == BT_COMM_DEVICE_ACTIVE_BLE_HEARING_AID);
