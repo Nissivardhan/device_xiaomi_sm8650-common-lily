@@ -1,0 +1,33 @@
+diff --git a/packages/SystemUI/src/com/android/systemui/statusbar/phone/CentralSurfacesImpl.java b/packages/SystemUI/src/com/android/systemui/statusbar/phone/CentralSurfacesImpl.java
+index 36363bb..b51cf10 100644
+--- a/packages/SystemUI/src/com/android/systemui/statusbar/phone/CentralSurfacesImpl.java
++++ b/packages/SystemUI/src/com/android/systemui/statusbar/phone/CentralSurfacesImpl.java
+@@ -1161,9 +1161,25 @@ public class CentralSurfacesImpl implements CoreStartable, CentralSurfaces,
+         if (depthWallpaperView.getParent() == null) {
+             root.setClipChildren(false);
+             root.setClipToPadding(false);
+-            View keyguardRootView = root.findViewById(R.id.keyguard_root_view);
+-            int insertIndex = root.indexOfChild(keyguardRootView) + 1;
+-            root.addView(depthWallpaperView, insertIndex);
++            // Inside the keyguard root, ordered by Z rather than position: the subject goes over
++            // the clock and the rest of the keyguard, but under the lock icon and the shortcuts.
++            ViewGroup keyguardRootView = root.findViewById(R.id.keyguard_root_view);
++            if (depthWallpaperView.getId() == View.NO_ID) {
++                // ConstraintSet.applyTo() requires every child of the keyguard root to have an id
++                depthWallpaperView.setId(View.generateViewId());
++            }
++            depthWallpaperView.setTranslationZ(0.1f);
++            keyguardRootView.addView(depthWallpaperView);
++            keyguardRootView.addOnLayoutChangeListener(
++                    (kgRoot, kgL, kgT, kgR, kgB, kgOldL, kgOldT, kgOldR, kgOldB) -> {
++                for (int raisedId : new int[] {R.id.device_entry_icon_view, R.id.start_button,
++                        R.id.end_button}) {
++                    View raised = kgRoot.findViewById(raisedId);
++                    if (raised != null) {
++                        raised.setTranslationZ(0.2f);
++                    }
++                }
++            });
+         }
+         ScrimUtils.get(mContext).setWallpaperDepthUtils(mWallpaperDepthUtils);
+         // Trigger initial visibility update to ensure correct state on first keyguard show
