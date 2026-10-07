@@ -1,5 +1,5 @@
 diff --git a/packages/SystemUI/src/com/android/systemui/statusbar/phone/CentralSurfacesImpl.java b/packages/SystemUI/src/com/android/systemui/statusbar/phone/CentralSurfacesImpl.java
-index 36363bb..0f13f6b 100644
+index 36363bb..b89e36c 100644
 --- a/packages/SystemUI/src/com/android/systemui/statusbar/phone/CentralSurfacesImpl.java
 +++ b/packages/SystemUI/src/com/android/systemui/statusbar/phone/CentralSurfacesImpl.java
 @@ -221,6 +221,7 @@ import com.android.systemui.tuner.TunerService;
@@ -15,17 +15,17 @@ index 36363bb..0f13f6b 100644
              int insertIndex = root.indexOfChild(keyguardRootView) + 1;
              root.addView(depthWallpaperView, insertIndex);
 +            // Keep the lock icon and the shortcuts above the subject
-+            DepthWallpaperOverlay.attach(root, depthWallpaperView,
++            DepthWallpaperOverlay.attach(root, depthWallpaperView, keyguardRootView,
 +                    R.id.device_entry_icon_view, R.id.start_button, R.id.end_button);
          }
          ScrimUtils.get(mContext).setWallpaperDepthUtils(mWallpaperDepthUtils);
          // Trigger initial visibility update to ensure correct state on first keyguard show
 diff --git a/packages/SystemUI/src/com/android/systemui/util/DepthWallpaperOverlay.java b/packages/SystemUI/src/com/android/systemui/util/DepthWallpaperOverlay.java
 new file mode 100644
-index 0000000..1111d8a
+index 0000000..6c771aa
 --- /dev/null
 +++ b/packages/SystemUI/src/com/android/systemui/util/DepthWallpaperOverlay.java
-@@ -0,0 +1,137 @@
+@@ -0,0 +1,144 @@
 +/*
 + * SPDX-License-Identifier: Apache-2.0
 + */
@@ -55,6 +55,9 @@ index 0000000..1111d8a
 +
 +    private final ViewGroup mRoot;
 +    private final View mSubject;
++    // Looked up here, not in the whole window: hidden legacy views (keyguard_bottom_area,
++    // chipbar) reuse the same ids
++    private final View mSearchRoot;
 +    private final int[] mIds;
 +    private final int[] mRootLoc = new int[2];
 +    private final int[] mParentLoc = new int[2];
@@ -62,17 +65,21 @@ index 0000000..1111d8a
 +    private final float[] mState;
 +    private final float[] mLastState;
 +
-+    private DepthWallpaperOverlay(ViewGroup root, View subject, int[] ids) {
++    private DepthWallpaperOverlay(ViewGroup root, View subject, View searchRoot, int[] ids) {
 +        mRoot = root;
 +        mSubject = subject;
++        mSearchRoot = searchRoot;
 +        mIds = ids;
 +        mState = new float[ids.length * 4 + 1];
 +        mLastState = new float[ids.length * 4 + 1];
 +    }
 +
-+    /** Draws the views with the given ids above the subject, which must be a child of root. */
-+    public static void attach(ViewGroup root, View subject, int... ids) {
-+        DepthWallpaperOverlay overlay = new DepthWallpaperOverlay(root, subject, ids);
++    /**
++     * Draws the views with the given ids, found under searchRoot, above the subject. The subject
++     * and searchRoot must both be inside root.
++     */
++    public static void attach(ViewGroup root, View subject, View searchRoot, int... ids) {
++        DepthWallpaperOverlay overlay = new DepthWallpaperOverlay(root, subject, searchRoot, ids);
 +        root.getOverlay().add(overlay);
 +        root.getViewTreeObserver().addOnPreDrawListener(overlay);
 +    }
@@ -101,7 +108,7 @@ index 0000000..1111d8a
 +        mState[mState.length - 1] = 1f;
 +        mRoot.getLocationInWindow(mRootLoc);
 +        for (int i = 0; i < mIds.length; i++) {
-+            View view = mRoot.findViewById(mIds[i]);
++            View view = mSearchRoot.findViewById(mIds[i]);
 +            if (view == null || !view.isShown() || !(view.getParent() instanceof View)) {
 +                continue;
 +            }
@@ -135,7 +142,7 @@ index 0000000..1111d8a
 +            if (mLastState[i * 4] == 0f || mLastState[i * 4 + 3] <= 0f) {
 +                continue;
 +            }
-+            View view = mRoot.findViewById(mIds[i]);
++            View view = mSearchRoot.findViewById(mIds[i]);
 +            if (view == null) {
 +                continue;
 +            }
