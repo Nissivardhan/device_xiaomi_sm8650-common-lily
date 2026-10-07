@@ -1,0 +1,24 @@
+diff --git a/LunarisDolby/res/drawable/ic_launcher_foreground.xml b/LunarisDolby/res/drawable/ic_launcher_foreground.xml
+index b761291..c74ba06 100644
+--- a/LunarisDolby/res/drawable/ic_launcher_foreground.xml
++++ b/LunarisDolby/res/drawable/ic_launcher_foreground.xml
+@@ -1,7 +1,7 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <vector android:height="108.0dip" android:width="108.0dip" android:viewportWidth="108.0" android:viewportHeight="108.0"
+   xmlns:android="http://schemas.android.com/apk/res/android">
+-    <group android:scaleX="0.84" android:scaleY="0.84" android:translateX="23.76" android:translateY="23.76">
++    <group android:scaleX="1.0" android:scaleY="1.0" android:translateX="18.0" android:translateY="18.0">
+         <path android:fillColor="#ffffffff" android:pathData="M12,19.13h5a16.87,16.87 0,0 1,0 33.74H12Z" />
+         <path android:fillColor="#ffffffff" android:pathData="M60,52.87H55a16.87,16.87 0,0 1,0 -33.74h5Z" />
+     </group>
+diff --git a/LunarisDolby/res/values/colors.xml b/LunarisDolby/res/values/colors.xml
+index eeacea5..edb46f6 100644
+--- a/LunarisDolby/res/values/colors.xml
++++ b/LunarisDolby/res/values/colors.xml
+@@ -1,4 +1,4 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <resources>
+-    <color name="ic_launcher_background">@android:color/system_accent1_400</color>
++    <color name="ic_launcher_background">#FF000000</color>
+ </resources>
+\ No newline at end of file
