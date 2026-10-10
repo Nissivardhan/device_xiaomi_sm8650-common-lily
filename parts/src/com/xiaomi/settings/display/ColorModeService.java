@@ -10,9 +10,12 @@ import static android.provider.Settings.System.DISPLAY_COLOR_MODE;
 import static com.xiaomi.settings.display.DfWrapper.DfParams;
 
 import android.app.Service;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.database.ContentObserver;
+import android.hardware.display.AmbientDisplayConfiguration;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.SystemProperties;
@@ -41,6 +44,11 @@ public class ColorModeService extends Service {
     /* original/p3/srgb */
     private static final int EXPERT_MODE = 26;
     private static final DfParams EXPERT_PARAMS = new DfParams(26, 0, 10);
+    private static final int STANDARD_COLOR_MODE = 257;
+
+    private final Handler mHandler = new Handler();
+    private AmbientDisplayConfiguration mAmbientConfig;
+    private boolean mIsDozing;
 
     private final ContentObserver mSettingObserver = new ContentObserver(new Handler()) {
         @Override
@@ -50,12 +58,40 @@ public class ColorModeService extends Service {
         }
     };
 
+    private final BroadcastReceiver mScreenStateReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (Intent.ACTION_SCREEN_ON.equals(intent.getAction())) {
+                if (mIsDozing) {
+                    mIsDozing = false;
+                    mHandler.removeCallbacksAndMessages(null);
+                    mHandler.postDelayed(() -> setCurrentColorMode(), 100);
+                }
+            } else if (Intent.ACTION_SCREEN_OFF.equals(intent.getAction())) {
+                if (!mAmbientConfig.alwaysOnEnabled(UserHandle.USER_CURRENT)) {
+                    mIsDozing = false;
+                    return;
+                }
+                /* Use standard color mode in AOD so black pixels stay off, saving power. */
+                mIsDozing = true;
+                mHandler.removeCallbacksAndMessages(null);
+                Log.d(TAG, "Entered AOD, set color mode to standard");
+                setColorMode(STANDARD_COLOR_MODE);
+            }
+        }
+    };
+
     @Override
     public void onCreate() {
         super.onCreate();
         Log.e(TAG, "onCreate");
         getContentResolver().registerContentObserver(Settings.System.getUriFor(DISPLAY_COLOR_MODE),
                     false, mSettingObserver, UserHandle.USER_CURRENT);
+        mAmbientConfig = new AmbientDisplayConfiguration(this);
+        final IntentFilter filter = new IntentFilter();
+        filter.addAction(Intent.ACTION_SCREEN_ON);
+        filter.addAction(Intent.ACTION_SCREEN_OFF);
+        registerReceiver(mScreenStateReceiver, filter);
         setCurrentColorMode();
     }
 
@@ -69,6 +105,8 @@ public class ColorModeService extends Service {
     public void onDestroy() {
         Log.e(TAG, "onDestroy");
         getContentResolver().unregisterContentObserver(mSettingObserver);
+        unregisterReceiver(mScreenStateReceiver);
+        mHandler.removeCallbacksAndMessages(null);
         super.onDestroy();
     }
 
@@ -78,8 +116,15 @@ public class ColorModeService extends Service {
     }
 
     private void setCurrentColorMode() {
-        final int colorMode = Settings.System.getIntForUser(getContentResolver(),
-                DISPLAY_COLOR_MODE, DEFAULT_COLOR_MODE, UserHandle.USER_CURRENT);
+        if (mIsDozing) {
+            Log.d(TAG, "setCurrentColorMode: skip in AOD");
+            return;
+        }
+        setColorMode(Settings.System.getIntForUser(getContentResolver(),
+                DISPLAY_COLOR_MODE, DEFAULT_COLOR_MODE, UserHandle.USER_CURRENT));
+    }
+
+    private void setColorMode(int colorMode) {
         if (!COLOR_MAP.containsKey(colorMode)) {
             Log.e(TAG, "setCurrentColorMode: " + colorMode + " is not in colorMap!");
             return;
