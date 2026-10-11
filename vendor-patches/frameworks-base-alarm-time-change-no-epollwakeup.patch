@@ -1,0 +1,18 @@
+diff --git a/apex/jobscheduler/service/jni/com_android_server_alarm_AlarmManagerService.cpp b/apex/jobscheduler/service/jni/com_android_server_alarm_AlarmManagerService.cpp
+index 3247da7..6648db9 100644
+--- a/apex/jobscheduler/service/jni/com_android_server_alarm_AlarmManagerService.cpp
++++ b/apex/jobscheduler/service/jni/com_android_server_alarm_AlarmManagerService.cpp
+@@ -212,7 +212,12 @@ static jlong android_server_alarm_AlarmManagerService_init(JNIEnv*, jobject)
+ 
+     for (size_t i = 0; i < fds.size(); i++) {
+         epoll_event event;
+-        event.events = EPOLLIN | EPOLLWAKEUP;
++        // The RTC change fd is canceled by the kernel on every resume, so with
++        // EPOLLWAKEUP it holds a wakeup source and aborts the next suspend.
++        event.events = EPOLLIN;
++        if (i != ANDROID_ALARM_TYPE_COUNT) {
++            event.events |= EPOLLWAKEUP;
++        }
+         event.data.u32 = i;
+ 
+         int err = epoll_ctl(epollfd, EPOLL_CTL_ADD, fds[i], &event);
