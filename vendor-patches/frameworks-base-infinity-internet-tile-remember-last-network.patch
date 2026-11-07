@@ -1,0 +1,100 @@
+diff --git a/packages/SystemUI/src/com/android/systemui/qs/tiles/InfinityInternetTile.kt b/packages/SystemUI/src/com/android/systemui/qs/tiles/InfinityInternetTile.kt
+index eca5e14..650e82b 100644
+--- a/packages/SystemUI/src/com/android/systemui/qs/tiles/InfinityInternetTile.kt
++++ b/packages/SystemUI/src/com/android/systemui/qs/tiles/InfinityInternetTile.kt
+@@ -64,6 +64,13 @@ class InfinityInternetTile @Inject constructor(
+ 
+     companion object {
+         const val TILE_SPEC = "infinity_internet"
++
++        private const val LAST_NETWORK_SETTING = "infinity_internet_tile_last_network"
++        private const val LAST_NETWORK_MOBILE = 0
++        private const val LAST_NETWORK_WIFI = 1
++        // Wi-Fi went off while mobile data stayed on: the next tap turns mobile data off,
++        // and Wi-Fi is still the network to bring back after that.
++        private const val LAST_NETWORK_WIFI_THEN_MOBILE = 2
+     }
+ 
+     private var isListening = false
+@@ -137,30 +144,64 @@ class InfinityInternetTile @Inject constructor(
+ 
+     private fun toggleInternetState() {
+         val wifiManager = mContext.getSystemService(WifiManager::class.java)
++        val baseTelephony = mContext.getSystemService(TelephonyManager::class.java)
++        val defaultDataSubId = SubscriptionManager.getDefaultDataSubscriptionId()
++        val hasValidSub = SubscriptionManager.isValidSubscriptionId(defaultDataSubId)
++        val telephony = if (hasValidSub) {
++            try { baseTelephony?.createForSubscriptionId(defaultDataSubId) } catch (_: Exception) { null }
++        } else {
++            baseTelephony
++        }
+         val wifiEnabled = wifiManager?.isWifiEnabled == true
++        val mobileDataEnabled = try { telephony?.isDataEnabled == true } catch (_: Exception) { false }
++        val contentResolver = mContext.contentResolver
++        val lastNetwork = Settings.Secure.getInt(
++            contentResolver,
++            LAST_NETWORK_SETTING,
++            LAST_NETWORK_MOBILE,
++        )
+ 
+-        if (wifiEnabled) {
+-            try {
+-                @Suppress("DEPRECATION")
+-                wifiManager?.setWifiEnabled(false)
+-            } catch (_: Exception) {}
+-        } else {
+-            val baseTelephony = mContext.getSystemService(TelephonyManager::class.java)
+-            val defaultDataSubId = SubscriptionManager.getDefaultDataSubscriptionId()
+-            val telephony = if (SubscriptionManager.isValidSubscriptionId(defaultDataSubId)) {
+-                try { baseTelephony?.createForSubscriptionId(defaultDataSubId) } catch (_: Exception) { null }
+-            } else {
+-                baseTelephony
++        when {
++            wifiEnabled -> {
++                setWifiEnabled(wifiManager, false)
++                Settings.Secure.putInt(
++                    contentResolver,
++                    LAST_NETWORK_SETTING,
++                    if (mobileDataEnabled) LAST_NETWORK_WIFI_THEN_MOBILE else LAST_NETWORK_WIFI,
++                )
+             }
+-            val mobileDataEnabled = try { telephony?.isDataEnabled == true } catch (_: Exception) { false }
+-            val target = !mobileDataEnabled
+-            try {
+-                telephony?.setDataEnabledForReason(TelephonyManager.DATA_ENABLED_REASON_USER, target)
+-            } catch (_: Exception) {}
++            mobileDataEnabled -> {
++                setMobileDataEnabled(telephony, false)
++                Settings.Secure.putInt(
++                    contentResolver,
++                    LAST_NETWORK_SETTING,
++                    if (lastNetwork == LAST_NETWORK_WIFI_THEN_MOBILE) {
++                        LAST_NETWORK_WIFI
++                    } else {
++                        LAST_NETWORK_MOBILE
++                    },
++                )
++            }
++            lastNetwork != LAST_NETWORK_MOBILE || !hasValidSub ->
++                setWifiEnabled(wifiManager, true)
++            else -> setMobileDataEnabled(telephony, true)
+         }
+         refreshState()
+     }
+ 
++    private fun setWifiEnabled(wifiManager: WifiManager?, enabled: Boolean) {
++        try {
++            @Suppress("DEPRECATION")
++            wifiManager?.setWifiEnabled(enabled)
++        } catch (_: Exception) {}
++    }
++
++    private fun setMobileDataEnabled(telephony: TelephonyManager?, enabled: Boolean) {
++        try {
++            telephony?.setDataEnabledForReason(TelephonyManager.DATA_ENABLED_REASON_USER, enabled)
++        } catch (_: Exception) {}
++    }
++
+     override fun getLongClickIntent(): Intent {
+         return Intent(Settings.ACTION_MANAGE_ALL_SIM_PROFILES_SETTINGS)
+     }
