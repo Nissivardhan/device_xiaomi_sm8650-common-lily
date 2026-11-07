@@ -6,4 +6,7 @@
 <resources>
     <!-- Anti-flicker (DC dimming) quick settings tile -->
     <string name="dc_dimming_title">Anti-flicker</string>
+
+    <!-- High touch polling rate quick settings tile -->
+    <string name="high_touch_polling_title">High touch polling</string>
 </resources>
