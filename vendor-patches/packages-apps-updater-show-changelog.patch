@@ -1,0 +1,13 @@
+diff --git a/app/src/main/java/net/pixelos/ota/data/source/local/UpdateEntity.kt b/app/src/main/java/net/pixelos/ota/data/source/local/UpdateEntity.kt
+index 50db56b..26cb008 100644
+--- a/app/src/main/java/net/pixelos/ota/data/source/local/UpdateEntity.kt
++++ b/app/src/main/java/net/pixelos/ota/data/source/local/UpdateEntity.kt
+@@ -110,5 +110,7 @@ fun UpdateEntity.toUpdate() = Update(
+     payloadSize = payloadSize,
+     payloadPropertiesOffset = payloadPropertiesOffset,
+     payloadPropertiesSize = payloadPropertiesSize,
+-    downloadUrl = downloadUrl
++    downloadUrl = downloadUrl,
++    // Rows with a download URL came from the update feed; without this the changelog never loads
++    isAvailableOnline = downloadUrl != null,
+ )
