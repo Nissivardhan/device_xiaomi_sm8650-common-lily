@@ -16,6 +16,7 @@
 -->
 <permissions>
     <privapp-permissions package="com.xiaomi.settings">
+        <permission name="android.permission.BACKUP"/>
         <permission name="android.permission.WRITE_SECURE_SETTINGS"/>
     </privapp-permissions>
 </permissions>
