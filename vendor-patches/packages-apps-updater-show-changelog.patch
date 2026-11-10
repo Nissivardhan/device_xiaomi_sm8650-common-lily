@@ -25,6 +25,26 @@ index 5dbd80d..fbaa326 100644
              } catch (e: Exception) {
                  Log.e(TAG, "Failed to fetch updates", e)
                  _uiState.update {
+diff --git a/app/src/main/java/net/pixelos/ota/data/ChangelogRepository.kt b/app/src/main/java/net/pixelos/ota/data/ChangelogRepository.kt
+index 60e2fa4..3ed430b 100644
+--- a/app/src/main/java/net/pixelos/ota/data/ChangelogRepository.kt
++++ b/app/src/main/java/net/pixelos/ota/data/ChangelogRepository.kt
+@@ -59,11 +59,12 @@ class ChangelogRepository(private val context: Context) {
+             if (contentLength > MAX_RESPONSE_BYTES) {
+                 throw IOException("Changelog is too large: $contentLength bytes")
+             }
+-            val bytes = body.source().readByteArray(MAX_RESPONSE_BYTES + 1)
+-            if (bytes.size > MAX_RESPONSE_BYTES) {
++            // readByteArray(n) needs exactly n bytes, so buffer up to the limit instead
++            val source = body.source()
++            if (source.request(MAX_RESPONSE_BYTES + 1)) {
+                 throw IOException("Changelog exceeds $MAX_RESPONSE_BYTES bytes")
+             }
+-            bytes.decodeToString().trim()
++            source.buffer.readByteArray().decodeToString().trim()
+         }
+ 
+         cachedKey = key
 diff --git a/app/src/main/java/net/pixelos/ota/data/source/local/UpdateEntity.kt b/app/src/main/java/net/pixelos/ota/data/source/local/UpdateEntity.kt
 index 50db56b..26cb008 100644
 --- a/app/src/main/java/net/pixelos/ota/data/source/local/UpdateEntity.kt
