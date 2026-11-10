@@ -59,7 +59,7 @@ index 50db56b..26cb008 100644
 +    isAvailableOnline = downloadUrl != null,
  )
 diff --git a/app/src/main/java/net/pixelos/ota/ui/SystemUpdateScreen.kt b/app/src/main/java/net/pixelos/ota/ui/SystemUpdateScreen.kt
-index 16ca82d..f241bf0 100644
+index 16ca82d..6ccfb73 100644
 --- a/app/src/main/java/net/pixelos/ota/ui/SystemUpdateScreen.kt
 +++ b/app/src/main/java/net/pixelos/ota/ui/SystemUpdateScreen.kt
 @@ -200,11 +200,41 @@ fun SystemUpdateScreen(
@@ -104,6 +104,39 @@ index 16ca82d..f241bf0 100644
  @Composable
  private fun UpdateDetails(
      item: UpdateItemState,
+@@ -216,12 +246,17 @@ private fun UpdateDetails(
+             UpdateProgress(progress)
+         }
+ 
+-        Text(
+-            text = "${item.buildVersion} - ${item.buildDate}",
+-            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+-            color = MaterialTheme.colorScheme.onSurface,
+-            modifier = Modifier.padding(top = 32.dp),
+-        )
++        // A changelog that starts with its own heading already names the build
++        val changelogHasHeading = changelogState is ChangelogState.Loaded &&
++                changelogState.markdown.trimStart().startsWith("#")
++        if (!changelogHasHeading) {
++            Text(
++                text = "${item.buildVersion} - ${item.buildDate}",
++                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
++                color = MaterialTheme.colorScheme.onSurface,
++                modifier = Modifier.padding(top = 32.dp),
++            )
++        }
+ 
+         when (changelogState) {
+             ChangelogState.Idle -> Unit
+@@ -247,7 +282,7 @@ private fun UpdateDetails(
+             } else {
+                 MarkdownText(
+                     markdown = changelogState.markdown,
+-                    modifier = Modifier.padding(top = 12.dp),
++                    modifier = Modifier.padding(top = if (changelogHasHeading) 32.dp else 12.dp),
+                 )
+             }
+         }
 diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
 index 967b9bd..77a6191 100644
 --- a/app/src/main/res/values/strings.xml
