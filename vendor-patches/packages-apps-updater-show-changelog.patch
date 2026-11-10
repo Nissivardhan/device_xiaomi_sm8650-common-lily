@@ -1,3 +1,30 @@
+diff --git a/app/src/main/java/net/pixelos/ota/UpdatesViewModel.kt b/app/src/main/java/net/pixelos/ota/UpdatesViewModel.kt
+index 5dbd80d..fbaa326 100644
+--- a/app/src/main/java/net/pixelos/ota/UpdatesViewModel.kt
++++ b/app/src/main/java/net/pixelos/ota/UpdatesViewModel.kt
+@@ -69,9 +69,8 @@ class UpdatesViewModel(
+         viewModelScope.launch {
+             repository.observeLocalUpdates().collect { updates ->
+                 _uiState.update { it.copy(updates = updates) }
+-                if (updates.any { it.isAvailableOnline }) {
+-                    loadChangelog()
+-                }
++                // Pending updates show it under the update, the up-to-date screen as what's new
++                loadChangelog()
+             }
+         }
+ 
+@@ -100,9 +99,7 @@ class UpdatesViewModel(
+                     appStateRepository.setLastCheckedTimestamp(fetchedAt)
+                 }
+                 _uiState.update { it.copy(isCheckingForUpdates = false) }
+-                if (_uiState.value.updates.any { it.isAvailableOnline }) {
+-                    loadChangelog()
+-                }
++                loadChangelog()
+             } catch (e: Exception) {
+                 Log.e(TAG, "Failed to fetch updates", e)
+                 _uiState.update {
 diff --git a/app/src/main/java/net/pixelos/ota/data/source/local/UpdateEntity.kt b/app/src/main/java/net/pixelos/ota/data/source/local/UpdateEntity.kt
 index 50db56b..26cb008 100644
 --- a/app/src/main/java/net/pixelos/ota/data/source/local/UpdateEntity.kt
@@ -11,3 +38,61 @@ index 50db56b..26cb008 100644
 +    // Rows with a download URL came from the update feed; without this the changelog never loads
 +    isAvailableOnline = downloadUrl != null,
  )
+diff --git a/app/src/main/java/net/pixelos/ota/ui/SystemUpdateScreen.kt b/app/src/main/java/net/pixelos/ota/ui/SystemUpdateScreen.kt
+index 16ca82d..f241bf0 100644
+--- a/app/src/main/java/net/pixelos/ota/ui/SystemUpdateScreen.kt
++++ b/app/src/main/java/net/pixelos/ota/ui/SystemUpdateScreen.kt
+@@ -200,11 +200,41 @@ fun SystemUpdateScreen(
+                     )
+                     Spacer(modifier = Modifier.height(24.dp))
+                 }
++
++                if (updateItem == null) {
++                    CurrentBuildChangelog(
++                        changelogState = changelogState,
++                        modifier = Modifier.padding(horizontal = HorizontalPadding),
++                    )
++                }
+             }
+         }
+     }
+ }
+ 
++@Composable
++private fun CurrentBuildChangelog(
++    changelogState: ChangelogState,
++    modifier: Modifier = Modifier,
++) {
++    val markdown = (changelogState as? ChangelogState.Loaded)?.markdown
++    if (markdown.isNullOrEmpty()) return
++
++    Column(modifier = modifier) {
++        Text(
++            text = stringResource(R.string.changelog_current_title),
++            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
++            color = MaterialTheme.colorScheme.onSurface,
++            modifier = Modifier.padding(top = 32.dp),
++        )
++        MarkdownText(
++            markdown = markdown,
++            modifier = Modifier.padding(top = 12.dp),
++        )
++        Spacer(modifier = Modifier.height(24.dp))
++    }
++}
++
+ @Composable
+ private fun UpdateDetails(
+     item: UpdateItemState,
+diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
+index 967b9bd..77a6191 100644
+--- a/app/src/main/res/values/strings.xml
++++ b/app/src/main/res/values/strings.xml
+@@ -76,6 +76,7 @@
+     <string name="metered_warning_footnote">Downloading updates over a mobile network or metered Wi-Fi may cause additional charges.</string>
+     <string name="changelog_loading">Loading recent changes…</string>
+     <string name="changelog_failed">Recent changes are temporarily unavailable.</string>
++    <string name="changelog_current_title">What\'s new</string>
+     <string name="changelog_empty">No changelog was provided for this build.</string>
+     <string name="updates_check_failed_title">Couldn\'t check for update</string>
+     <string name="check_for_update">Check for update</string>
