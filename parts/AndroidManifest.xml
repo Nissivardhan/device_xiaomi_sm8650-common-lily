@@ -16,6 +16,7 @@
     <uses-permission android:name="android.permission.WRITE_SETTINGS" />
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.BACKUP" />
 
     <application
         android:label="@string/device_settings_app_name"
@@ -82,12 +83,17 @@
             android:excludeFromRecents="true"
             android:icon="@mipmap/ic_launcher_seedvault"
             android:label="@string/seedvault_launcher_title"
-            android:theme="@android:style/Theme.NoDisplay">
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <service
+            android:name=".backup.TransportRestoreJob"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
 
     </application>
 </manifest>
