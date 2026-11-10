@@ -24,6 +24,7 @@ import vendor.xiaomi.hw.touchfeature.ITouchFeature;
 import com.xiaomi.settings.display.ColorModeService;
 import com.xiaomi.settings.display.DcDimming;
 import com.xiaomi.settings.display.DozeBrightnessService;
+import com.xiaomi.settings.backup.SeedvaultLauncherActivity;
 import com.xiaomi.settings.touch.HighTouchPollingService;
 
 public class BootCompletedReceiver extends BroadcastReceiver {
@@ -50,6 +51,9 @@ public class BootCompletedReceiver extends BroadcastReceiver {
         context.startServiceAsUser(new Intent(context, DozeBrightnessService.class),
                 UserHandle.CURRENT);
         DcDimming.apply(context);
+
+        // Backup
+        SeedvaultLauncherActivity.updateEnabled(context);
 
         // Touch
         context.startServiceAsUser(new Intent(context, HighTouchPollingService.class),
