@@ -12,4 +12,14 @@
 
     <!-- Launcher entry for Seedvault backup -->
     <string name="seedvault_launcher_title">Seedvault backup</string>
+    <string name="seedvault_full_backup_title">Full backup with Seedvault</string>
+    <string name="seedvault_full_backup_message">Google stays your daily backup. To make a full backup of your apps with Seedvault, app backups switch to Seedvault for now.\n\nWhen you\'re done, open this icon again to switch back. If you forget, it switches back to Google by itself in 6 hours.</string>
+    <string name="seedvault_full_backup_start">Start full backup</string>
+    <string name="seedvault_just_open">Just open Seedvault</string>
+    <string name="seedvault_full_backup_hint">Seedvault is now backing up your apps. Tap ⋮ › Back up now.</string>
+    <string name="seedvault_switch_back_title">Finished the full backup?</string>
+    <string name="seedvault_switch_back_message">App backups are going to Seedvault. Switch back to make Google your daily backup again.</string>
+    <string name="seedvault_switch_back">Switch back to Google</string>
+    <string name="seedvault_switched_back">Google is your daily backup again.</string>
+    <string name="seedvault_switch_failed">Couldn\'t switch the backup service. Try again.</string>
 </resources>
