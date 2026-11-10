@@ -126,3 +126,6 @@
 # Xiaomi thermal daemon
 /(vendor|system/vendor)/bin/mi_thermald     u:object_r:mi_thermald_exec:s0
 /data/vendor/thermal(/.*)?                  u:object_r:vendor_thermal_data_file:s0
+
+# Firmware partitions the OTA updates (the rest are labelled by the QCOM sepolicy)
+/dev/block/platform/soc/1d84000\.ufshc/by-name/modemfirmware_[ab]    u:object_r:vendor_custom_ab_block_device:s0
