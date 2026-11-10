@@ -76,5 +76,18 @@
                 android:value="true" />
         </service>
 
+        <activity
+            android:name=".backup.SeedvaultLauncherActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:icon="@drawable/ic_backup"
+            android:label="@string/seedvault_launcher_title"
+            android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
     </application>
 </manifest>

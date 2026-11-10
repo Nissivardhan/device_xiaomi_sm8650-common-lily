@@ -9,4 +9,7 @@
 
     <!-- High touch polling rate quick settings tile -->
     <string name="high_touch_polling_title">High touch polling</string>
+
+    <!-- Launcher entry for Seedvault backup -->
+    <string name="seedvault_launcher_title">Seedvault backup</string>
 </resources>
