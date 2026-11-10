@@ -80,7 +80,7 @@
             android:name=".backup.SeedvaultLauncherActivity"
             android:exported="true"
             android:excludeFromRecents="true"
-            android:icon="@drawable/ic_backup"
+            android:icon="@mipmap/ic_launcher_seedvault"
             android:label="@string/seedvault_launcher_title"
             android:theme="@android:style/Theme.NoDisplay">
             <intent-filter>

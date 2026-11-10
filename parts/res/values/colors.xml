@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     Copyright (C) 2026 The LineageOS Project
+     SPDX-License-Identifier: Apache-2.0
+-->
+<resources>
+    <!-- Seedvault shortcut icon background (Seedvault's green) -->
+    <color name="seedvault_icon_background">#FF2E7D32</color>
+</resources>

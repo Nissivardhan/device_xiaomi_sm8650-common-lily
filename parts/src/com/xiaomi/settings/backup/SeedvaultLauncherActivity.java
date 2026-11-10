@@ -28,8 +28,10 @@ public class SeedvaultLauncherActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         try {
+            // Start Seedvault in a fresh task. Bringing back an old one could show a
+            // window that was still closing, which left a black screen.
             startActivity(new Intent().setComponent(SEEDVAULT_SETTINGS)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK));
         } catch (Exception e) {
             Log.e(TAG, "Failed to open Seedvault", e);
         }
