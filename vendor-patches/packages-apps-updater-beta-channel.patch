@@ -1,0 +1,147 @@
+diff --git a/app/src/main/java/net/pixelos/ota/data/BetaChannel.kt b/app/src/main/java/net/pixelos/ota/data/BetaChannel.kt
+new file mode 100644
+index 0000000..be13d21
+--- /dev/null
++++ b/app/src/main/java/net/pixelos/ota/data/BetaChannel.kt
+@@ -0,0 +1,31 @@
++/*
++ * SPDX-FileCopyrightText: 2026 Nissi Builds
++ * SPDX-License-Identifier: Apache-2.0
++ */
++
++package net.pixelos.ota.data
++
++import android.content.Context
++import android.provider.Settings
++import java.security.MessageDigest
++
++/**
++ * Invite-only beta channel. Every phone has a beta tester ID derived from its Android ID
++ * (not reversible). A phone gets beta builds only if the feed repo has a file for its ID,
++ * next to the stable feed: .../updater/beta/<id>.json. Everyone else reads the stable feed.
++ * The ID changes after a factory reset.
++ */
++object BetaChannel {
++
++    fun testerId(context: Context): String {
++        val androidId = Settings.Secure.getString(
++            context.contentResolver, Settings.Secure.ANDROID_ID
++        ).orEmpty()
++        val digest = MessageDigest.getInstance("SHA-256")
++            .digest("houji-ota-beta:$androidId".toByteArray())
++        return digest.take(6).joinToString("") { "%02x".format(it) }
++    }
++
++    fun feedUrl(stableUrl: String, testerId: String): String =
++        stableUrl.substringBeforeLast('/') + "/beta/" + testerId + ".json"
++}
+diff --git a/app/src/main/java/net/pixelos/ota/data/source/network/UpdatesNetworkDataSource.kt b/app/src/main/java/net/pixelos/ota/data/source/network/UpdatesNetworkDataSource.kt
+index 92fe6ad..6f6440a 100644
+--- a/app/src/main/java/net/pixelos/ota/data/source/network/UpdatesNetworkDataSource.kt
++++ b/app/src/main/java/net/pixelos/ota/data/source/network/UpdatesNetworkDataSource.kt
+@@ -10,6 +10,8 @@ import okhttp3.OkHttpClient
+ import okhttp3.Request
+ import net.pixelos.ota.R
+ import net.pixelos.ota.deviceinfo.DeviceInfoUtils
++import android.util.Log
++import net.pixelos.ota.data.BetaChannel
+ import java.io.IOException
+ import java.util.concurrent.TimeUnit
+ 
+@@ -40,11 +42,26 @@ class UpdatesNetworkDataSource(private val context: Context) {
+         .build()
+ 
+     fun fetchUpdates(): List<NetworkUpdate> {
++        val stableUrl = serverUrl
++        val betaUrl = BetaChannel.feedUrl(stableUrl, BetaChannel.testerId(context))
++        val responseBody = try {
++            fetch(betaUrl, missingOk = true)
++        } catch (e: IOException) {
++            Log.w(TAG, "Beta feed check failed, using the stable feed", e)
++            null
++        }?.also { Log.i(TAG, "Enrolled in the beta channel") } ?: fetch(stableUrl, missingOk = false)!!
++
++        return Json.decodeFromString<List<NetworkUpdate>>(responseBody).onEach { it.validate() }
++    }
++
++    /** Returns the feed text, or null if [missingOk] and the server answers 404. */
++    private fun fetch(url: String, missingOk: Boolean): String? {
+         val request = Request.Builder()
+-            .url(serverUrl)
++            .url(url)
+             .build()
+ 
+-        val responseBody = client.newCall(request).execute().use { response ->
++        return client.newCall(request).execute().use { response ->
++            if (missingOk && response.code == 404) return null
+             if (!response.isSuccessful) {
+                 throw IOException("Unexpected HTTP status: ${response.code}")
+             }
+@@ -61,11 +78,10 @@ class UpdatesNetworkDataSource(private val context: Context) {
+             }
+             source.buffer.readByteArray().decodeToString()
+         }
+-
+-        return Json.decodeFromString<List<NetworkUpdate>>(responseBody).onEach { it.validate() }
+     }
+ 
+     private companion object {
++        const val TAG = "UpdatesNetworkDataSource"
+         const val MAX_RESPONSE_BYTES = 1024L * 1024L
+     }
+ }
+diff --git a/app/src/main/java/net/pixelos/ota/preferences/PreferencesScreen.kt b/app/src/main/java/net/pixelos/ota/preferences/PreferencesScreen.kt
+index 6e041fc..f083154 100644
+--- a/app/src/main/java/net/pixelos/ota/preferences/PreferencesScreen.kt
++++ b/app/src/main/java/net/pixelos/ota/preferences/PreferencesScreen.kt
+@@ -15,7 +15,13 @@ import androidx.compose.runtime.setValue
+ import androidx.compose.ui.platform.LocalContext
+ import androidx.compose.ui.res.stringResource
+ import androidx.lifecycle.compose.collectAsStateWithLifecycle
++import android.content.ClipData
++import android.content.ClipboardManager
++import android.widget.Toast
+ import com.android.settingslib.spa.widget.preference.ListPreference
++import com.android.settingslib.spa.widget.preference.Preference
++import com.android.settingslib.spa.widget.preference.PreferenceModel
++import net.pixelos.ota.data.BetaChannel
+ import com.android.settingslib.spa.widget.preference.ListPreferenceModel
+ import com.android.settingslib.spa.widget.preference.ListPreferenceOption
+ import com.android.settingslib.spa.widget.preference.SwitchPreference
+@@ -190,6 +196,22 @@ private fun PreferencesContent(
+             })
+         }
+     }
++
++    val context = LocalContext.current
++    val testerId = remember { BetaChannel.testerId(context) }
++    val testerIdSummary = stringResource(R.string.menu_beta_tester_id_summary, testerId)
++    val copiedText = stringResource(R.string.beta_tester_id_copied)
++    Category(title = stringResource(R.string.pref_category_beta)) {
++        Preference(object : PreferenceModel {
++            override val title = stringResource(R.string.menu_beta_tester_id)
++            override val summary = { testerIdSummary }
++            override val onClick: () -> Unit = {
++                context.getSystemService(ClipboardManager::class.java)
++                    ?.setPrimaryClip(ClipData.newPlainText("Beta tester ID", testerId))
++                Toast.makeText(context, copiedText, Toast.LENGTH_SHORT).show()
++            }
++        })
++    }
+ }
+ 
+ private fun installRecoveryScriptExists() = File("/vendor/bin/install-recovery.sh").exists()
+diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
+index 967b9bd..3df893f 100644
+--- a/app/src/main/res/values/strings.xml
++++ b/app/src/main/res/values/strings.xml
+@@ -207,4 +207,9 @@
+     <string name="local_update_import_success_message">Build date: <xliff:g id="build_date" example="Apr 27">%1$s</xliff:g>\n\nTap the imported update to view available actions.</string>
+     <string name="local_update_import_failure">Failed to import local update</string>
+     <string name="local_update_name">Local update</string>
++    <!-- Invite-only beta channel -->
++    <string name="pref_category_beta">Beta program</string>
++    <string name="menu_beta_tester_id">Beta tester ID</string>
++    <string name="menu_beta_tester_id_summary">%1$s · tap to copy, then send it to the maintainer to get beta builds</string>
++    <string name="beta_tester_id_copied">Beta tester ID copied</string>
+ </resources>
