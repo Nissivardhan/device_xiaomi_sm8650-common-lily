@@ -1,0 +1,36 @@
+diff --git a/app/src/main/java/net/pixelos/ota/data/UpdatesRepository.kt b/app/src/main/java/net/pixelos/ota/data/UpdatesRepository.kt
+index de3d514..d48d684 100644
+--- a/app/src/main/java/net/pixelos/ota/data/UpdatesRepository.kt
++++ b/app/src/main/java/net/pixelos/ota/data/UpdatesRepository.kt
+@@ -144,7 +144,14 @@ class UpdatesRepository(
+                 val range = ranges[Constants.AB_PAYLOAD_METADATA_PATH] ?: return false
+                 val metadata = File(Utils.getDownloadPath(context), "${delta.sha256}.metadata")
+                 try {
+-                    metadata.writeBytes(fetcher.download(range.offset, range.size))
++                    // One retry: a network hiccup shouldn't turn a small update into a 4 GB one.
++                    val bytes = try {
++                        fetcher.download(range.offset, range.size)
++                    } catch (e: java.io.IOException) {
++                        Log.w(TAG, "Retrying metadata download for ${delta.filename}", e)
++                        fetcher.download(range.offset, range.size)
++                    }
++                    metadata.writeBytes(bytes)
+                     metadata.setReadable(true, false)
+                     UpdateEngine().verifyPayloadMetadata(metadata.path)
+                 } finally {
+diff --git a/app/src/main/java/net/pixelos/ota/download/SingleRangeHttpFetcher.kt b/app/src/main/java/net/pixelos/ota/download/SingleRangeHttpFetcher.kt
+index 3f0a782..9feb2d7 100644
+--- a/app/src/main/java/net/pixelos/ota/download/SingleRangeHttpFetcher.kt
++++ b/app/src/main/java/net/pixelos/ota/download/SingleRangeHttpFetcher.kt
+@@ -15,7 +15,10 @@ import java.util.concurrent.TimeUnit
+ class SingleRangeHttpFetcher(private val url: String) {
+ 
+     private val client = OkHttpClient.Builder()
+-        .callTimeout(10, TimeUnit.SECONDS)
++        // The payload metadata of a small update is ~1 MB; fresh SourceForge mirrors can be
++        // slow, and a timeout here makes the Updater offer the full zip instead.
++        .connectTimeout(15, TimeUnit.SECONDS)
++        .callTimeout(60, TimeUnit.SECONDS)
+         .build()
+ 
+     @Throws(IOException::class)
