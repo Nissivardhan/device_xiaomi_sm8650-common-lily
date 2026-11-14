@@ -1,0 +1,175 @@
+diff --git a/app/src/main/java/com/stevesoltys/seedvault/settings/SettingsViewModel.kt b/app/src/main/java/com/stevesoltys/seedvault/settings/SettingsViewModel.kt
+index 1570dc7f..3cdd1607 100644
+--- a/app/src/main/java/com/stevesoltys/seedvault/settings/SettingsViewModel.kt
++++ b/app/src/main/java/com/stevesoltys/seedvault/settings/SettingsViewModel.kt
+@@ -5,6 +5,8 @@
+ 
+ package com.stevesoltys.seedvault.settings
+ 
++import com.stevesoltys.seedvault.transport.TRANSPORT_ID
++
+ import android.app.Application
+ import android.app.backup.IBackupManager
+ import android.database.ContentObserver
+@@ -308,7 +310,9 @@ internal class SettingsViewModel(
+ 
+     fun scheduleBackups(existingWorkPolicy: ExistingPeriodicWorkPolicy) {
+         // disable framework scheduling, because another transport may have enabled it
+-        backupManager.setFrameworkSchedulingEnabledForUser(UserHandle.myUserId(), false)
++        if (backupManager.currentTransport == TRANSPORT_ID) {
++            backupManager.setFrameworkSchedulingEnabledForUser(UserHandle.myUserId(), false)
++        }
+         if (!backendManager.isOnRemovableDrive && backupRequester.isBackupEnabled) {
+             FileBackupWorker.schedule(app, settingsManager, existingWorkPolicy)
+         }
+@@ -325,7 +329,9 @@ internal class SettingsViewModel(
+             Log.i(TAG, "Scheduling file backup...")
+         }
+         val workManager = WorkManager.getInstance(app)
+-        backupManager.setFrameworkSchedulingEnabledForUser(UserHandle.myUserId(), false)
++        if (backupManager.currentTransport == TRANSPORT_ID) {
++            backupManager.setFrameworkSchedulingEnabledForUser(UserHandle.myUserId(), false)
++        }
+         viewModelScope.launch {
+             val workInfos = workManager.getWorkInfosForUniqueWorkFlow(UNIQUE_WORK_NAME).first()
+             val workInfo = workInfos.getOrNull(0)
+diff --git a/app/src/main/java/com/stevesoltys/seedvault/transport/TransportSwitcher.kt b/app/src/main/java/com/stevesoltys/seedvault/transport/TransportSwitcher.kt
+new file mode 100644
+index 00000000..ce1ce0b5
+--- /dev/null
++++ b/app/src/main/java/com/stevesoltys/seedvault/transport/TransportSwitcher.kt
+@@ -0,0 +1,65 @@
++/*
++ * SPDX-FileCopyrightText: 2026 Nissi Builds
++ * SPDX-License-Identifier: Apache-2.0
++ */
++
++package com.stevesoltys.seedvault.transport
++
++import android.app.backup.IBackupManager
++import android.content.Context
++import android.os.UserHandle
++import android.util.Log
++
++private const val TAG = "TransportSwitcher"
++private const val PREFS = "transport_switcher"
++private const val KEY_PREVIOUS = "previous_transport"
++
++/**
++ * Lets Seedvault's scheduled backup run while another backup service (Google) stays the
++ * active one: switch to Seedvault for the app data backup, then put the previous one back.
++ */
++object TransportSwitcher {
++
++    /** Makes Seedvault the active transport, remembering the current one. */
++    fun switchToSeedvault(context: Context, backupManager: IBackupManager): Boolean {
++        val current = try {
++            backupManager.currentTransport
++        } catch (e: Exception) {
++            Log.e(TAG, "Couldn't read the current transport", e)
++            return false
++        }
++        if (current == null || current == TRANSPORT_ID) return true
++        return try {
++            prefs(context).edit().putString(KEY_PREVIOUS, current).commit()
++            @Suppress("DEPRECATION")
++            backupManager.selectBackupTransport(TRANSPORT_ID)
++            Log.i(TAG, "Switched from $current to Seedvault for this backup")
++            backupManager.currentTransport == TRANSPORT_ID
++        } catch (e: Exception) {
++            Log.e(TAG, "Couldn't switch to Seedvault", e)
++            false
++        }
++    }
++
++    /** Puts back the transport saved by [switchToSeedvault], if any. */
++    fun restore(context: Context, backupManager: IBackupManager) {
++        val previous = prefs(context).getString(KEY_PREVIOUS, null) ?: return
++        try {
++            // respect a manual change made while the backup was running
++            if (backupManager.currentTransport == TRANSPORT_ID) {
++                @Suppress("DEPRECATION")
++                backupManager.selectBackupTransport(previous)
++            }
++            // the other service relies on the framework's own daily backup jobs
++            backupManager.setFrameworkSchedulingEnabledForUser(UserHandle.myUserId(), true)
++            Log.i(TAG, "Switched back to $previous")
++        } catch (e: Exception) {
++            Log.e(TAG, "Couldn't switch back to $previous", e)
++        } finally {
++            prefs(context).edit().remove(KEY_PREVIOUS).commit()
++        }
++    }
++
++    private fun prefs(context: Context) =
++        context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
++}
+diff --git a/app/src/main/java/com/stevesoltys/seedvault/ui/notification/NotificationBackupObserver.kt b/app/src/main/java/com/stevesoltys/seedvault/ui/notification/NotificationBackupObserver.kt
+index 7fc5f450..5e5d07ab 100644
+--- a/app/src/main/java/com/stevesoltys/seedvault/ui/notification/NotificationBackupObserver.kt
++++ b/app/src/main/java/com/stevesoltys/seedvault/ui/notification/NotificationBackupObserver.kt
+@@ -5,6 +5,10 @@
+ 
+ package com.stevesoltys.seedvault.ui.notification
+ 
++import android.app.backup.IBackupManager
++import com.stevesoltys.seedvault.transport.TransportSwitcher
++import org.koin.core.context.GlobalContext
++
+ import android.app.backup.BackupProgress
+ import android.app.backup.BackupTransport.AGENT_ERROR
+ import android.app.backup.IBackupObserver
+@@ -156,6 +160,7 @@ internal class NotificationBackupObserver(
+         if (backupRequester.hasNext && !backendManager.canDoBackupNow()) {
+             Log.w(TAG, "Not requesting another backup, likely on metered network. ")
+             nm.onBackupError(true)
++            TransportSwitcher.restore(context, GlobalContext.get().get<IBackupManager>())
+         } else if (backupRequester.requestNext()) {
+             // FIXME we should consider not requesting backup of more chunks of packages,
+             //  if the backup has already failed for this chunk,
+@@ -180,6 +185,7 @@ internal class NotificationBackupObserver(
+                 }
+             } finally {
+                 context.stopService(i)
++                TransportSwitcher.restore(context, GlobalContext.get().get<IBackupManager>())
+             }
+         }
+     }
+diff --git a/app/src/main/java/com/stevesoltys/seedvault/worker/AppBackupWorker.kt b/app/src/main/java/com/stevesoltys/seedvault/worker/AppBackupWorker.kt
+index 772ad69a..af36cfe4 100644
+--- a/app/src/main/java/com/stevesoltys/seedvault/worker/AppBackupWorker.kt
++++ b/app/src/main/java/com/stevesoltys/seedvault/worker/AppBackupWorker.kt
+@@ -5,6 +5,9 @@
+ 
+ package com.stevesoltys.seedvault.worker
+ 
++import android.app.backup.IBackupManager
++import com.stevesoltys.seedvault.transport.TransportSwitcher
++
+ import android.content.Context
+ import android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+ import android.util.Log
+@@ -55,6 +58,7 @@ class AppBackupWorker(
+     private val appBackupManager: AppBackupManager by inject()
+     private val backendManager: BackendManager by inject()
+     private val nm: BackupNotificationManager by inject()
++    private val backupManager: IBackupManager by inject()
+ 
+     override suspend fun doWork(): Result {
+         Log.i(TAG, "Start worker  $this ($id)")
+@@ -111,7 +115,14 @@ class AppBackupWorker(
+         Log.i(TAG, "Requesting app data backup... (stopped: $isStopped)")
+         if (!isStopped && backupRequester.isBackupEnabled && backendManager.canDoBackupNow()) {
+             Log.i(TAG, "Backup is enabled, request backup...")
+-            if (!backupRequester.requestBackup()) return Result.retry()
++            if (!TransportSwitcher.switchToSeedvault(applicationContext, backupManager)) {
++                TransportSwitcher.restore(applicationContext, backupManager)
++                return Result.retry()
++            }
++            if (!backupRequester.requestBackup()) {
++                TransportSwitcher.restore(applicationContext, backupManager)
++                return Result.retry()
++            }
+         } else {
+             Log.i(TAG, "Stopping, because s:$isStopped c:${backendManager.canDoBackupNow()}")
+         }
