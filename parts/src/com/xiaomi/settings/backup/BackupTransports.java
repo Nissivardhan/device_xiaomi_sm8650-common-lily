@@ -67,8 +67,25 @@ final class BackupTransports {
         }
         // Only switch back if Seedvault is still the active one; respect a manual change
         final boolean ok = !isSeedvaultActive(context) || select(context, target);
-        if (ok) prefs(context).edit().remove(KEY_SAVED).apply();
+        if (ok) {
+            prefs(context).edit().remove(KEY_SAVED).apply();
+            enableFrameworkScheduling(context);
+        }
         return ok;
+    }
+
+    /**
+     * Seedvault turns off Android's own backup scheduling while it is the backup service,
+     * because it schedules its backups itself. Other services (Google) rely on it for their
+     * daily backups, so turn it back on once Seedvault is no longer the active service.
+     */
+    static void enableFrameworkScheduling(Context context) {
+        if (isSeedvaultActive(context)) return;
+        try {
+            new BackupManager(context).setFrameworkSchedulingEnabled(true);
+        } catch (RuntimeException e) {
+            Log.w(TAG, "Couldn't re-enable backup scheduling", e);
+        }
     }
 
     private static ComponentName current(Context context) {
