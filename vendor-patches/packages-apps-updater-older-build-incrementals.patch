@@ -1,0 +1,86 @@
+diff --git a/app/src/main/java/net/pixelos/ota/data/UpdatesRepository.kt b/app/src/main/java/net/pixelos/ota/data/UpdatesRepository.kt
+index d48d684..d2db1d8 100644
+--- a/app/src/main/java/net/pixelos/ota/data/UpdatesRepository.kt
++++ b/app/src/main/java/net/pixelos/ota/data/UpdatesRepository.kt
+@@ -19,6 +19,7 @@ import net.pixelos.ota.data.source.local.UpdatesLocalDataSource
+ import net.pixelos.ota.data.source.network.NetworkUpdate
+ import net.pixelos.ota.data.source.network.UpdatesNetworkDataSource
+ import net.pixelos.ota.data.source.network.parsePackageFileRanges
++import net.pixelos.ota.data.source.network.incrementalForThisBuild
+ import net.pixelos.ota.data.source.network.toIncrementalUpdate
+ import net.pixelos.ota.data.source.network.toUpdate
+ import net.pixelos.ota.deviceinfo.DeviceInfoUtils
+@@ -123,7 +124,7 @@ class UpdatesRepository(
+     private fun persistIncrementalLinks(network: List<NetworkUpdate>) {
+         val links = JSONObject()
+         network.forEach { update ->
+-            update.incremental?.firstOrNull()?.let { delta ->
++            update.incrementalForThisBuild()?.let { delta ->
+                 links.put(update.files[0].sha256, delta.url)
+             }
+         }
+@@ -136,7 +137,7 @@ class UpdatesRepository(
+      * payloads, and non-A/B packages must list this build as their source.
+      */
+     private fun isIncrementalApplicable(update: NetworkUpdate): Boolean {
+-        val delta = update.incremental?.firstOrNull() ?: return false
++        val delta = update.incrementalForThisBuild() ?: return false
+         val ranges = delta.otaPropertyFiles?.parsePackageFileRanges(delta.size) ?: return false
+         val fetcher = SingleRangeHttpFetcher(delta.url)
+         return try {
+diff --git a/app/src/main/java/net/pixelos/ota/data/source/network/NetworkUpdate.kt b/app/src/main/java/net/pixelos/ota/data/source/network/NetworkUpdate.kt
+index 0ebbb83..c5abcd2 100644
+--- a/app/src/main/java/net/pixelos/ota/data/source/network/NetworkUpdate.kt
++++ b/app/src/main/java/net/pixelos/ota/data/source/network/NetworkUpdate.kt
+@@ -12,6 +12,7 @@ import kotlinx.serialization.SerialName
+ import kotlinx.serialization.Serializable
+ import kotlinx.serialization.json.JsonIgnoreUnknownKeys
+ import net.pixelos.ota.data.Update
++import net.pixelos.ota.deviceinfo.DeviceInfoUtils
+ import net.pixelos.ota.misc.Constants
+ import java.net.URI
+ 
+@@ -26,6 +27,9 @@ data class NetworkUpdate(
+     @SerialName("datetime") val datetime: Long,
+     @SerialName("files") val files: List<NetworkUpdateFile>,
+     @SerialName("incremental") val incremental: List<NetworkUpdateFile>? = null,
++    // Small updates from older builds, each tagged with its source build (source_datetime).
++    // Kept out of "incremental", which older Updaters require to hold exactly one file.
++    @SerialName("incrementals") val incrementals: List<NetworkUpdateFile>? = null,
+     @SerialName("version") val version: String,
+ )
+ 
+@@ -43,6 +47,7 @@ data class NetworkUpdateFile(
+     // @SerialName("sha1") val sha1: String,
+     @SerialName("sha256") val sha256: String,
+     @SerialName("size") val size: Long,
++    @SerialName("source_datetime") val sourceDatetime: Long? = null,
+     // @SerialName("type") val type: String? = null,
+     @SerialName("url") val url: String,
+ )
+@@ -99,8 +104,17 @@ fun NetworkUpdate.validate() {
+         require(it.size == 1) { "Each update must contain exactly one incremental file" }
+         it.single().validate("incremental file")
+     }
++    incrementals?.forEach { it.validate("incremental file") }
+ }
+ 
++/**
++ * The small update for the running build: the entry of [NetworkUpdate.incrementals] made from
++ * this build, else the default [NetworkUpdate.incremental] (made from the previous release).
++ */
++fun NetworkUpdate.incrementalForThisBuild(): NetworkUpdateFile? =
++    incrementals?.firstOrNull { it.sourceDatetime == DeviceInfoUtils.buildDateTimestamp }
++        ?: incremental?.firstOrNull()
++
+ private fun NetworkUpdate.toUpdate(file: NetworkUpdateFile): Update {
+     val packageFileRanges = file.otaPropertyFiles?.parsePackageFileRanges(file.size).orEmpty()
+     val payloadMetadataRange = packageFileRanges[Constants.AB_PAYLOAD_METADATA_PATH]
+@@ -129,6 +143,6 @@ private fun NetworkUpdate.toUpdate(file: NetworkUpdateFile): Update {
+ fun NetworkUpdate.toUpdate(): Update = toUpdate(files[0])
+ 
+ fun NetworkUpdate.toIncrementalUpdate(): Update? {
+-    val file = incremental?.firstOrNull() ?: return null
++    val file = incrementalForThisBuild() ?: return null
+     return toUpdate(file)
+ }

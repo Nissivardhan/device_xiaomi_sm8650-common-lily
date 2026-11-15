@@ -1,0 +1,341 @@
+diff --git a/app/src/main/java/net/pixelos/ota/UpdaterReceiver.java b/app/src/main/java/net/pixelos/ota/UpdaterReceiver.java
+index aefce3c..41e1923 100644
+--- a/app/src/main/java/net/pixelos/ota/UpdaterReceiver.java
++++ b/app/src/main/java/net/pixelos/ota/UpdaterReceiver.java
+@@ -16,6 +16,7 @@ import net.pixelos.ota.controller.UpdaterService;
+ import net.pixelos.ota.deviceinfo.DeviceInfoUtils;
+ import net.pixelos.ota.misc.Constants;
+ import net.pixelos.ota.misc.Utils;
++import net.pixelos.ota.controller.NightlyInstallWorker;
+ import net.pixelos.ota.updatescheck.UpdatesCheckWorker;
+ 
+ public class UpdaterReceiver extends BroadcastReceiver {
+@@ -42,6 +43,7 @@ public class UpdaterReceiver extends BroadcastReceiver {
+         } else if (Intent.ACTION_BOOT_COMPLETED.equals(intent.getAction())) {
+             Utils.removeUncryptFiles(Utils.getDownloadPath(context));
+             UpdatesCheckWorker.schedulePeriodicCheck(context);
++            NightlyInstallWorker.scheduleIfEnabled(context);
+ 
+             SharedPreferences pref = PreferenceManager.getDefaultSharedPreferences(context);
+             String downloadId = pref.getString(Constants.PREF_NEEDS_REBOOT_ID, null);
+diff --git a/app/src/main/java/net/pixelos/ota/controller/NightlyInstallWorker.kt b/app/src/main/java/net/pixelos/ota/controller/NightlyInstallWorker.kt
+new file mode 100644
+index 0000000..b9e557c
+--- /dev/null
++++ b/app/src/main/java/net/pixelos/ota/controller/NightlyInstallWorker.kt
+@@ -0,0 +1,209 @@
++/*
++ * SPDX-FileCopyrightText: The LineageOS Project
++ * SPDX-License-Identifier: Apache-2.0
++ */
++
++package net.pixelos.ota.controller
++
++import android.app.Notification
++import android.app.NotificationManager
++import android.app.PendingIntent
++import android.content.Context
++import android.content.Intent
++import android.util.Log
++import androidx.preference.PreferenceManager
++import androidx.work.Constraints
++import androidx.work.CoroutineWorker
++import androidx.work.ExistingPeriodicWorkPolicy
++import androidx.work.NetworkType
++import androidx.work.PeriodicWorkRequestBuilder
++import androidx.work.WorkManager
++import androidx.work.WorkerParameters
++import kotlinx.coroutines.CoroutineScope
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.SupervisorJob
++import kotlinx.coroutines.delay
++import kotlinx.coroutines.flow.first
++import kotlinx.coroutines.launch
++import net.pixelos.ota.R
++import net.pixelos.ota.UpdaterApplication
++import net.pixelos.ota.UpdaterReceiver
++import net.pixelos.ota.data.Update
++import net.pixelos.ota.data.UpdateStatus
++import net.pixelos.ota.deviceinfo.DeviceInfoUtils
++import net.pixelos.ota.misc.Constants
++import net.pixelos.ota.notifications.NotificationHelper
++import net.pixelos.ota.util.InstallUtils
++import net.pixelos.ota.util.StringUtil
++import java.time.LocalTime
++import java.time.format.FormatStyle
++import java.util.concurrent.TimeUnit
++
++/**
++ * Installs the newest update overnight: once an hour while the phone charges on an unmetered
++ * network, and only between [START_HOUR] and [END_HOUR]. The update is streamed to
++ * update_engine, the small update for this build when there is one. The phone is never
++ * restarted; a notification offers the restart once the update is ready.
++ */
++class NightlyInstallWorker(
++    context: Context,
++    params: WorkerParameters,
++) : CoroutineWorker(context, params) {
++
++    private val prefs = PreferenceManager.getDefaultSharedPreferences(applicationContext)
++
++    override suspend fun doWork(): Result {
++        val app = applicationContext as UpdaterApplication
++        if (!app.userPreferencesRepository.getAutoInstallOvernight() ||
++            !DeviceInfoUtils.isABDevice
++        ) {
++            return Result.success()
++        }
++
++        // An update installed by an earlier run is waiting for the restart.
++        if (notifyIfReady()) return Result.success()
++
++        if (LocalTime.now().hour !in START_HOUR until END_HOUR) return Result.success()
++
++        val controller = UpdaterController.getInstance(applicationContext)
++        val installer = ABUpdateInstaller.getInstance(
++            applicationContext, controller, app.userPreferencesRepository
++        )
++        if (ABUpdateInstaller.isInstallingUpdate(applicationContext)) {
++            // Started by an earlier run or by hand: just follow it.
++            installer.reconnect()
++            prefs.getString(PREF_NIGHTLY_ID, null)?.let { waitForInstall(controller, it) }
++            return Result.success()
++        }
++
++        return try {
++            app.updatesRepository.fetchUpdates() ?: return Result.success()
++            val updates = app.updatesRepository.observeLocalUpdates().first().filter {
++                it.downloadId != Update.LOCAL_ID && it.isAvailableOnline &&
++                        it.timestamp > DeviceInfoUtils.buildDateTimestamp &&
++                        InstallUtils.canInstall(it)
++            }
++            if (updates.isEmpty()) return Result.success()
++
++            updates.forEach { controller.addUpdate(it, true) }
++            controller.setUpdatesAvailableOnline(updates.map { it.downloadId }, false)
++
++            // The small update when it applies to this build, else the newest full package.
++            val id = controller.displayUpdateId ?: updates.maxBy { it.timestamp }.downloadId
++            val update = controller.getUpdate(id)
++            if (update == null || !update.hasPayloadFileRanges()) {
++                Log.w(TAG, "$id can't be streamed, leaving it for the user")
++                return Result.success()
++            }
++
++            Log.i(TAG, "Installing ${update.name} overnight")
++            prefs.edit().putString(PREF_NIGHTLY_ID, id).apply()
++            installer.installStreaming(id)
++            waitForInstall(controller, id)
++            Result.success()
++        } catch (e: Exception) {
++            Log.e(TAG, "Overnight install failed", e)
++            Result.retry()
++        }
++    }
++
++    /** Polls until the install ends or this run's time is nearly up (the next run follows on). */
++    private suspend fun waitForInstall(controller: UpdaterController, id: String) {
++        val deadline = System.currentTimeMillis() + MAX_WAIT_MS
++        while (System.currentTimeMillis() < deadline && !isStopped) {
++            delay(POLL_MS)
++            if (notifyIfReady()) return
++            if (controller.getUpdate(id)?.status == UpdateStatus.INSTALLATION_FAILED) {
++                Log.w(TAG, "Overnight install of $id failed")
++                prefs.edit().remove(PREF_NIGHTLY_ID).apply()
++                return
++            }
++        }
++    }
++
++    /** Posts the restart notification once for an update this worker installed. */
++    private fun notifyIfReady(): Boolean {
++        val nightlyId = prefs.getString(PREF_NIGHTLY_ID, null) ?: return false
++        if (prefs.getString(Constants.PREF_NEEDS_REBOOT_ID, null) != nightlyId) return false
++
++        val update = UpdaterController.getInstance(applicationContext).getUpdate(nightlyId)
++        val buildInfo = if (update != null) {
++            applicationContext.getString(
++                R.string.list_build_version_date,
++                update.version,
++                StringUtil.getDateLocalizedUTC(
++                    applicationContext, FormatStyle.MEDIUM, update.timestamp
++                ),
++            )
++        } else {
++            applicationContext.getString(R.string.app_name)
++        }
++        val reboot = PendingIntent.getBroadcast(
++            applicationContext, 0,
++            Intent(applicationContext, UpdaterReceiver::class.java)
++                .setAction(UpdaterReceiver.ACTION_INSTALL_REBOOT),
++            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
++        )
++        val text = applicationContext.getString(R.string.auto_install_done_text, buildInfo)
++        val notification =
++            Notification.Builder(applicationContext, NotificationHelper.CHANNEL_NEW_UPDATES)
++                .setSmallIcon(R.drawable.ic_notification)
++                .setCategory(Notification.CATEGORY_SYSTEM)
++                .setVisibility(Notification.VISIBILITY_PUBLIC)
++                .setContentTitle(applicationContext.getString(R.string.auto_install_done_title))
++                .setContentText(text)
++                .setStyle(Notification.BigTextStyle().bigText(text))
++                .addAction(
++                    Notification.Action.Builder(
++                        null, applicationContext.getString(R.string.reboot), reboot
++                    ).build()
++                )
++                .setAutoCancel(true)
++                .build()
++        applicationContext.getSystemService(NotificationManager::class.java)
++            .notify(NOTIFICATION_ID, notification)
++        prefs.edit().remove(PREF_NIGHTLY_ID).apply()
++        return true
++    }
++
++    companion object {
++        private const val TAG = "NightlyInstallWorker"
++        private const val WORK_NAME = "nightly_install"
++        private const val PREF_NIGHTLY_ID = "nightly_install_id"
++        private const val NOTIFICATION_ID = 20
++
++        const val START_HOUR = 1
++        const val END_HOUR = 5
++
++        private const val POLL_MS = 15_000L
++        private const val MAX_WAIT_MS = 9 * 60_000L
++
++        @JvmStatic
++        fun schedule(context: Context) {
++            val constraints = Constraints.Builder()
++                .setRequiresCharging(true)
++                .setRequiresBatteryNotLow(true)
++                .setRequiredNetworkType(NetworkType.UNMETERED)
++                .build()
++            val request = PeriodicWorkRequestBuilder<NightlyInstallWorker>(1, TimeUnit.HOURS)
++                .setConstraints(constraints)
++                .build()
++            WorkManager.getInstance(context).enqueueUniquePeriodicWork(
++                WORK_NAME, ExistingPeriodicWorkPolicy.KEEP, request
++            )
++        }
++
++        @JvmStatic
++        fun cancel(context: Context) {
++            WorkManager.getInstance(context).cancelUniqueWork(WORK_NAME)
++        }
++
++        @JvmStatic
++        fun scheduleIfEnabled(context: Context) {
++            CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
++                val app = context.applicationContext as UpdaterApplication
++                if (app.userPreferencesRepository.getAutoInstallOvernight()) schedule(context)
++            }
++        }
++    }
++}
+diff --git a/app/src/main/java/net/pixelos/ota/data/UserPreferencesRepository.kt b/app/src/main/java/net/pixelos/ota/data/UserPreferencesRepository.kt
+index 4183d3a..ebae9e7 100644
+--- a/app/src/main/java/net/pixelos/ota/data/UserPreferencesRepository.kt
++++ b/app/src/main/java/net/pixelos/ota/data/UserPreferencesRepository.kt
+@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.first
+ import kotlinx.coroutines.flow.map
+ import kotlinx.coroutines.runBlocking
+ import net.pixelos.ota.deviceinfo.DeviceInfoUtils
++import net.pixelos.ota.controller.NightlyInstallWorker
+ import net.pixelos.ota.updatescheck.UpdatesCheckWorker
+ import java.io.IOException
+ 
+@@ -36,6 +37,7 @@ private val Context.userPreferencesDataStore: DataStore<Preferences> by preferen
+ private object UserPreferencesKeys {
+     val AB_PERF_MODE = booleanPreferencesKey("ab_perf_mode")
+     val AUTO_DELETE = booleanPreferencesKey("auto_delete_updates")
++    val AUTO_INSTALL_OVERNIGHT = booleanPreferencesKey("auto_install_overnight")
+     val CHECK_INTERVAL = stringPreferencesKey("check_interval")
+     val METERED_NETWORK_WARNING = booleanPreferencesKey("metered_network_warning")
+     val PERIODIC_CHECK_ENABLED = booleanPreferencesKey("periodic_check_enabled")
+@@ -120,6 +122,21 @@ class UserPreferencesRepository(context: Context) {
+         userPreferences.edit { it[UserPreferencesKeys.AUTO_DELETE] = value }
+     }
+ 
++    val autoInstallOvernightFlow: Flow<Boolean> = userPreferencesFlow.map { preferences ->
++        preferences[UserPreferencesKeys.AUTO_INSTALL_OVERNIGHT] ?: false
++    }
++
++    suspend fun getAutoInstallOvernight(): Boolean = autoInstallOvernightFlow.first()
++
++    suspend fun setAutoInstallOvernight(enabled: Boolean) {
++        userPreferences.edit { it[UserPreferencesKeys.AUTO_INSTALL_OVERNIGHT] = enabled }
++        if (enabled) {
++            NightlyInstallWorker.schedule(appContext)
++        } else {
++            NightlyInstallWorker.cancel(appContext)
++        }
++    }
++
+     val meteredNetworkWarningFlow: Flow<Boolean> = userPreferencesFlow.map { preferences ->
+         preferences[UserPreferencesKeys.METERED_NETWORK_WARNING] ?: true
+     }
+diff --git a/app/src/main/java/net/pixelos/ota/notifications/NotificationHelper.kt b/app/src/main/java/net/pixelos/ota/notifications/NotificationHelper.kt
+index 72a5aa4..debc01e 100644
+--- a/app/src/main/java/net/pixelos/ota/notifications/NotificationHelper.kt
++++ b/app/src/main/java/net/pixelos/ota/notifications/NotificationHelper.kt
+@@ -104,7 +104,7 @@ class NotificationHelper(context: Context) {
+     companion object {
+         const val CHANNEL_EXPORT = "export_notification_channel"
+         private const val CHANNEL_INSTALL_ERROR = "install_error_notification_channel"
+-        private const val CHANNEL_NEW_UPDATES = "new_updates_notification_channel"
++        const val CHANNEL_NEW_UPDATES = "new_updates_notification_channel"
+         const val CHANNEL_ONGOING = "ongoing_notification_channel"
+ 
+         private const val ID_EXPORT = 16
+diff --git a/app/src/main/java/net/pixelos/ota/preferences/PreferencesScreen.kt b/app/src/main/java/net/pixelos/ota/preferences/PreferencesScreen.kt
+index f083154..4671279 100644
+--- a/app/src/main/java/net/pixelos/ota/preferences/PreferencesScreen.kt
++++ b/app/src/main/java/net/pixelos/ota/preferences/PreferencesScreen.kt
+@@ -77,6 +77,7 @@ private fun PreferencesContent(
+     )
+     val autoDelete by repository.autoDeleteFlow.collectAsStateWithLifecycle(true)
+     val streamUpdates by repository.streamUpdatesFlow.collectAsStateWithLifecycle(true)
++    val autoInstallOvernight by repository.autoInstallOvernightFlow.collectAsStateWithLifecycle(false)
+     val checkInterval by repository.checkIntervalFlow.collectAsStateWithLifecycle(CheckInterval.default)
+     val meteredNetworkWarning by repository.meteredNetworkWarningFlow.collectAsStateWithLifecycle(
+         true
+@@ -87,6 +88,7 @@ private fun PreferencesContent(
+     val autoUpdatesCheckSummary = stringResource(R.string.menu_auto_updates_check_summary)
+     val autoDeleteUpdatesSummary = stringResource(R.string.menu_auto_delete_updates_summary)
+     val streamUpdatesSummary = stringResource(R.string.menu_stream_updates_summary)
++    val autoInstallOvernightSummary = stringResource(R.string.menu_auto_install_overnight_summary)
+     val meteredNetworkWarningSummary = stringResource(R.string.menu_metered_network_warning_summary)
+     val abPerfModeSummary = stringResource(R.string.menu_ab_perf_mode_summary)
+     val abPerfModeChargingSummary = stringResource(R.string.menu_ab_perf_mode_summary_charging)
+@@ -146,6 +148,15 @@ private fun PreferencesContent(
+                     coroutineScope.launch { repository.setStreamUpdates(value) }
+                 }
+             })
++
++            SwitchPreference(object : SwitchPreferenceModel {
++                override val title = stringResource(R.string.menu_auto_install_overnight)
++                override val summary = { autoInstallOvernightSummary }
++                override val checked = { autoInstallOvernight }
++                override val onCheckedChange: (Boolean) -> Unit = { value ->
++                    coroutineScope.launch { repository.setAutoInstallOvernight(value) }
++                }
++            })
+         } else {
+             SwitchPreference(object : SwitchPreferenceModel {
+                 override val title = stringResource(R.string.menu_auto_delete_updates)
+diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
+index d181434..22e2d69 100644
+--- a/app/src/main/res/values/strings.xml
++++ b/app/src/main/res/values/strings.xml
+@@ -108,6 +108,10 @@
+     <string name="pref_category_download_install">Download and installation</string>
+     <string name="menu_auto_delete_updates">Auto-delete updates</string>
+     <string name="menu_auto_delete_updates_summary">Remove downloaded updates after installation</string>
++    <string name="menu_auto_install_overnight">Install updates overnight</string>
++    <string name="menu_auto_install_overnight_summary">Between 1 and 5 am, while charging on Wi-Fi. You restart the phone when it suits you.</string>
++    <string name="auto_install_done_title">Update installed overnight</string>
++    <string name="auto_install_done_text">Restart to finish updating to %1$s</string>
+     <string name="menu_stream_updates">Stream online updates</string>
+     <string name="menu_stream_updates_summary">Install updates while downloading. Disable to save update packages for export.</string>
+     <string name="menu_delete_update">Delete</string>
