@@ -19,10 +19,10 @@ index de3d514..d48d684 100644
                      UpdateEngine().verifyPayloadMetadata(metadata.path)
                  } finally {
 diff --git a/app/src/main/java/net/pixelos/ota/download/SingleRangeHttpFetcher.kt b/app/src/main/java/net/pixelos/ota/download/SingleRangeHttpFetcher.kt
-index 3f0a782..9feb2d7 100644
+index 3f0a782..cd97f47 100644
 --- a/app/src/main/java/net/pixelos/ota/download/SingleRangeHttpFetcher.kt
 +++ b/app/src/main/java/net/pixelos/ota/download/SingleRangeHttpFetcher.kt
-@@ -15,7 +15,10 @@ import java.util.concurrent.TimeUnit
+@@ -15,7 +15,12 @@ import java.util.concurrent.TimeUnit
  class SingleRangeHttpFetcher(private val url: String) {
  
      private val client = OkHttpClient.Builder()
@@ -30,6 +30,8 @@ index 3f0a782..9feb2d7 100644
 +        // The payload metadata of a small update is ~1 MB; fresh SourceForge mirrors can be
 +        // slow, and a timeout here makes the Updater offer the full zip instead.
 +        .connectTimeout(15, TimeUnit.SECONDS)
++        // OkHttp's default 10 s read timeout (max wait between bytes) also hit fresh mirrors
++        .readTimeout(60, TimeUnit.SECONDS)
 +        .callTimeout(60, TimeUnit.SECONDS)
          .build()
  
