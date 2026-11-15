@@ -1,0 +1,100 @@
+diff --git a/app/src/main/java/com/stevesoltys/seedvault/ui/notification/NotificationBackupObserver.kt b/app/src/main/java/com/stevesoltys/seedvault/ui/notification/NotificationBackupObserver.kt
+index 5e5d07ab..c25e7459 100644
+--- a/app/src/main/java/com/stevesoltys/seedvault/ui/notification/NotificationBackupObserver.kt
++++ b/app/src/main/java/com/stevesoltys/seedvault/ui/notification/NotificationBackupObserver.kt
+@@ -5,6 +5,8 @@
+ 
+ package com.stevesoltys.seedvault.ui.notification
+ 
++import android.app.backup.BackupManager
++
+ import android.app.backup.IBackupManager
+ import com.stevesoltys.seedvault.transport.TransportSwitcher
+ import org.koin.core.context.GlobalContext
+@@ -39,6 +41,7 @@ import org.koin.core.component.KoinComponent
+ import org.koin.core.component.inject
+ 
+ private val TAG = NotificationBackupObserver::class.java.simpleName
++private const val MAX_ABORT_RETRIES = 3
+ 
+ internal class NotificationBackupObserver(
+     private val context: Context,
+@@ -58,6 +61,11 @@ internal class NotificationBackupObserver(
+     private var pmCounted: Boolean = false
+ 
+     private var errorPackageName: String? = null
++
++    // packages that got a result in the chunk being backed up, and the app that aborted it
++    private val doneInChunk = mutableSetOf<String>()
++    private var abortedPackage: String? = null
++    private var abortRetries = 0
+     private val launchableSystemApps by lazy {
+         packageService.launchableSystemApps.map { it.activityInfo.packageName }.toSet()
+     }
+@@ -96,6 +104,8 @@ internal class NotificationBackupObserver(
+         if (isLoggable(TAG, INFO)) {
+             Log.i(TAG, "Completed. Target: $target, status: $status")
+         }
++        doneInChunk.add(target)
++        if (status == BackupManager.ERROR_TRANSPORT_ABORTED) abortedPackage = target
+         // prevent double counting of @pm@ which gets backed up with each requested chunk
+         if (target == MAGIC_PACKAGE_MANAGER) {
+             if (!pmCounted) {
+@@ -157,6 +167,21 @@ internal class NotificationBackupObserver(
+             }
+         }
+         Log.i(TAG, "Backup finished $numPackages/$requestedPackages. Status: $status")
++        val culprit = abortedPackage
++        val done = doneInChunk.toSet()
++        doneInChunk.clear()
++        abortedPackage = null
++        if (status == BackupManager.ERROR_TRANSPORT_ABORTED && culprit != null &&
++            culprit != MAGIC_PACKAGE_MANAGER && abortRetries < MAX_ABORT_RETRIES &&
++            backendManager.canDoBackupNow()
++        ) {
++            // An app hung (e.g. the 5 min full backup timeout) and took its chunk down.
++            // Don't let it do that every night, and back up the rest of the chunk now.
++            abortRetries++
++            Log.w(TAG, "$culprit aborted its chunk, disabling its backup and retrying the rest")
++            settingsManager.disableBackup(culprit)
++            if (backupRequester.requestRemaining(done + culprit)) return
++        }
+         if (backupRequester.hasNext && !backendManager.canDoBackupNow()) {
+             Log.w(TAG, "Not requesting another backup, likely on metered network. ")
+             nm.onBackupError(true)
+diff --git a/app/src/main/java/com/stevesoltys/seedvault/worker/BackupRequester.kt b/app/src/main/java/com/stevesoltys/seedvault/worker/BackupRequester.kt
+index 2dcb2ae5..73969baa 100644
+--- a/app/src/main/java/com/stevesoltys/seedvault/worker/BackupRequester.kt
++++ b/app/src/main/java/com/stevesoltys/seedvault/worker/BackupRequester.kt
+@@ -113,6 +113,23 @@ internal class BackupRequester(
+      */
+     private var packageIndex: Int = 0
+ 
++    /** Packages of the chunk requested last, for [requestRemaining]. */
++    private var lastChunk: List<String> = emptyList()
++
++    /**
++     * When one app hangs, the framework aborts its whole chunk (ERROR_TRANSPORT_ABORTED) and
++     * the apps after it never get backed up. Requests those again, without [done].
++     *
++     * @return true if a request was made.
++     */
++    fun requestRemaining(done: Set<String>): Boolean {
++        val rest = lastChunk.filter { it !in done }
++        if (rest.isEmpty()) return false
++        lastChunk = rest
++        Log.i(TAG, "Re-requesting ${rest.size} packages skipped by an aborted chunk")
++        return request(rest.toTypedArray())
++    }
++
+     /**
+      * Request the backup to happen. Should be called short after constructing this object.
+      */
+@@ -170,6 +187,7 @@ internal class BackupRequester(
+         val numBackingUp = packageIndex + packageChunk.size
+         Log.i(TAG, "Requesting backup for $numBackingUp of ${packages.size} packages...")
+         packageIndex += packageChunk.size
++        lastChunk = packageChunk.toList()
+         return packageChunk
+     }
+ }
