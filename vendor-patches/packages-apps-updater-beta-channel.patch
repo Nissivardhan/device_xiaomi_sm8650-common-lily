@@ -1,9 +1,9 @@
 diff --git a/app/src/main/java/net/pixelos/ota/data/BetaChannel.kt b/app/src/main/java/net/pixelos/ota/data/BetaChannel.kt
 new file mode 100644
-index 0000000..be13d21
+index 0000000..f0eedad
 --- /dev/null
 +++ b/app/src/main/java/net/pixelos/ota/data/BetaChannel.kt
-@@ -0,0 +1,31 @@
+@@ -0,0 +1,45 @@
 +/*
 + * SPDX-FileCopyrightText: 2026 Nissi Builds
 + * SPDX-License-Identifier: Apache-2.0
@@ -34,9 +34,69 @@ index 0000000..be13d21
 +
 +    fun feedUrl(stableUrl: String, testerId: String): String =
 +        stableUrl.substringBeforeLast('/') + "/beta/" + testerId + ".json"
++
++    /** Beta builds have their own changelog: .../changelogs/beta/<device>.md */
++    fun changelogUrl(stableUrl: String): String =
++        stableUrl.substringBeforeLast('/') + "/beta/" + stableUrl.substringAfterLast('/')
++
++    fun isEnrolled(context: Context): Boolean = prefs(context).getBoolean(KEY_ENROLLED, false)
++
++    fun setEnrolled(context: Context, enrolled: Boolean) {
++        prefs(context).edit().putBoolean(KEY_ENROLLED, enrolled).apply()
++    }
++
++    private const val KEY_ENROLLED = "enrolled"
++    private fun prefs(context: Context) =
++        context.applicationContext.getSharedPreferences("beta_channel", Context.MODE_PRIVATE)
 +}
+diff --git a/app/src/main/java/net/pixelos/ota/data/ChangelogRepository.kt b/app/src/main/java/net/pixelos/ota/data/ChangelogRepository.kt
+index 3ed430b..0535ca1 100644
+--- a/app/src/main/java/net/pixelos/ota/data/ChangelogRepository.kt
++++ b/app/src/main/java/net/pixelos/ota/data/ChangelogRepository.kt
+@@ -40,7 +40,8 @@ class ChangelogRepository(private val context: Context) {
+         require(device.isNotBlank()) { "Missing ro.custom.device" }
+         require(branch.isNotBlank()) { "Missing net.pixelos.version" }
+ 
+-        val key = "$branch/$device"
++        val beta = BetaChannel.isEnrolled(context)
++        val key = "$branch/$device/${if (beta) "beta" else "stable"}"
+         if (cachedKey == key) {
+             cachedMarkdown?.let { return@withContext it }
+         }
+@@ -50,7 +51,18 @@ class ChangelogRepository(private val context: Context) {
+             .replace("{device}", device)
+         require(url.startsWith("https://")) { "Changelog URL must use HTTPS" }
+ 
+-        val markdown = client.newCall(Request.Builder().url(url).build()).execute().use { response ->
++        val markdown = (if (beta) download(BetaChannel.changelogUrl(url), missingOk = true) else null)
++            ?: download(url, missingOk = false)!!
++
++        cachedKey = key
++        cachedMarkdown = markdown
++        markdown
++    }
++
++    /** Returns the changelog text, or null if [missingOk] and the server answers 404. */
++    private fun download(url: String, missingOk: Boolean): String? =
++        client.newCall(Request.Builder().url(url).build()).execute().use { response ->
++            if (missingOk && response.code == 404) return null
+             if (!response.isSuccessful) {
+                 throw IOException("Unexpected changelog HTTP status: ${response.code}")
+             }
+@@ -67,11 +79,6 @@ class ChangelogRepository(private val context: Context) {
+             source.buffer.readByteArray().decodeToString().trim()
+         }
+ 
+-        cachedKey = key
+-        cachedMarkdown = markdown
+-        markdown
+-    }
+-
+     private companion object {
+         const val MAX_RESPONSE_BYTES = 256L * 1024L
+     }
 diff --git a/app/src/main/java/net/pixelos/ota/data/source/network/UpdatesNetworkDataSource.kt b/app/src/main/java/net/pixelos/ota/data/source/network/UpdatesNetworkDataSource.kt
-index 92fe6ad..6f6440a 100644
+index 92fe6ad..12938ed 100644
 --- a/app/src/main/java/net/pixelos/ota/data/source/network/UpdatesNetworkDataSource.kt
 +++ b/app/src/main/java/net/pixelos/ota/data/source/network/UpdatesNetworkDataSource.kt
 @@ -10,6 +10,8 @@ import okhttp3.OkHttpClient
@@ -55,7 +115,7 @@ index 92fe6ad..6f6440a 100644
 +        val stableUrl = serverUrl
 +        val betaUrl = BetaChannel.feedUrl(stableUrl, BetaChannel.testerId(context))
 +        val responseBody = try {
-+            fetch(betaUrl, missingOk = true)
++            fetch(betaUrl, missingOk = true).also { BetaChannel.setEnrolled(context, it != null) }
 +        } catch (e: IOException) {
 +            Log.w(TAG, "Beta feed check failed, using the stable feed", e)
 +            null
@@ -132,10 +192,10 @@ index 6e041fc..f083154 100644
  
  private fun installRecoveryScriptExists() = File("/vendor/bin/install-recovery.sh").exists()
 diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
-index 967b9bd..3df893f 100644
+index 77a6191..d181434 100644
 --- a/app/src/main/res/values/strings.xml
 +++ b/app/src/main/res/values/strings.xml
-@@ -207,4 +207,9 @@
+@@ -208,4 +208,9 @@
      <string name="local_update_import_success_message">Build date: <xliff:g id="build_date" example="Apr 27">%1$s</xliff:g>\n\nTap the imported update to view available actions.</string>
      <string name="local_update_import_failure">Failed to import local update</string>
      <string name="local_update_name">Local update</string>
