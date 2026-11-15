@@ -1,0 +1,66 @@
+diff --git a/app/src/main/java/net/pixelos/ota/controller/ABUpdateInstaller.java b/app/src/main/java/net/pixelos/ota/controller/ABUpdateInstaller.java
+index 08c0e7c..db288a8 100644
+--- a/app/src/main/java/net/pixelos/ota/controller/ABUpdateInstaller.java
++++ b/app/src/main/java/net/pixelos/ota/controller/ABUpdateInstaller.java
+@@ -52,6 +52,9 @@ class ABUpdateInstaller {
+ 
+     private boolean mFinalizing;
+     private int mProgress;
++    // Set while a streaming install fetches its payload properties, before update_engine
++    // takes over: a second tap on Install must not start another one.
++    private volatile boolean mPreparing;
+ 
+     private final UpdateEngineCallback mUpdateEngineCallback = new UpdateEngineCallback() {
+ 
+@@ -217,16 +220,25 @@ class ABUpdateInstaller {
+     }
+ 
+     public void installStreaming(String downloadId) {
+-        if (isInstallingUpdate(mContext)) {
++        if (isInstallingUpdate(mContext) || mPreparing) {
+             Log.e(TAG, "Already installing an update");
+             return;
+         }
++        mPreparing = true;
+ 
+         mDownloadId = downloadId;
+ 
+         Update update = mUpdaterController.getUpdate(mDownloadId);
+         String downloadUrl = update.getDownloadUrl();
+ 
++        // Show the install as started right away: fetching the payload properties from a slow
++        // mirror can take a while, and without feedback the button looks like it did nothing.
++        mUpdaterController.setUpdate(mDownloadId, update.toBuilder()
++                .setStatus(UpdateStatus.INSTALLING)
++                .setInstallProgress(0)
++                .build());
++        mUpdaterController.notifyUpdateChange(mDownloadId);
++
+         new Thread(() -> {
+             try {
+                 String[] headerKeyValuePairs = fetchPayloadProperties(downloadUrl,
+@@ -238,6 +250,8 @@ class ABUpdateInstaller {
+                 Log.e(TAG, "Could not prepare streaming update", e);
+                 mUpdaterController.markInstallationFailed(downloadId);
+                 mUpdaterController.notifyUpdateChange(downloadId);
++            } finally {
++                mPreparing = false;
+             }
+         }, "UpdaterStreamingInstall").start();
+     }
+@@ -266,6 +280,15 @@ class ABUpdateInstaller {
+         try {
+             mUpdateEngine.applyPayload(url, offset, size, headerKeyValuePairs);
+         } catch (ServiceSpecificException e) {
++            if (e.errorCode == 65 /* already processing an update */) {
++                // update_engine is already applying an update (a second request for the same
++                // one): keep following it instead of reporting this install as failed.
++                Log.w(TAG, "update_engine is busy with an update, following it");
++                PreferenceManager.getDefaultSharedPreferences(mContext).edit()
++                        .putString(PREF_INSTALLING_AB_ID, mDownloadId)
++                        .apply();
++                return;
++            }
+             if (e.errorCode == 66 /* kUpdateAlreadyInstalled */) {
+                 installationDone(true);
+                 Update update = mUpdaterController.getUpdate(mDownloadId);
