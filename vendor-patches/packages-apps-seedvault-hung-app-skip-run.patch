@@ -1,0 +1,50 @@
+diff --git a/app/src/main/java/com/stevesoltys/seedvault/settings/SettingsManager.kt b/app/src/main/java/com/stevesoltys/seedvault/settings/SettingsManager.kt
+index dcc12afa..a5c2f3e8 100644
+--- a/app/src/main/java/com/stevesoltys/seedvault/settings/SettingsManager.kt
++++ b/app/src/main/java/com/stevesoltys/seedvault/settings/SettingsManager.kt
+@@ -53,6 +53,8 @@ private const val PREF_KEY_WEBDAV_URL = "webDavUrl"
+ private const val PREF_KEY_WEBDAV_USER = "webDavUser"
+ private const val PREF_KEY_WEBDAV_PASS = "webDavPass"
+ 
++private const val PREF_KEY_HUNG_APPS_RESTORED = "hungAppsRestored"
++private val AUTO_EXCLUDED_HIDDEN_APPS = setOf("com.android.healthconnect.backuprestore")
+ private const val PREF_KEY_BACKUP_APP_BLACKLIST = "backupAppBlacklist"
+ 
+ private const val PREF_KEY_BACKUP_STORAGE = "backup_storage"
+@@ -80,6 +82,17 @@ class SettingsManager(private val context: Context) {
+         ConcurrentSkipListSet(prefs.getStringSet(PREF_KEY_BACKUP_APP_BLACKLIST, emptySet()))
+     }
+ 
++    init {
++        // Earlier builds excluded an app for good when it hung during a backup, including
++        // apps hidden from the app list (Health Connect), which then couldn't be turned back on.
++        if (!prefs.getBoolean(PREF_KEY_HUNG_APPS_RESTORED, false)) {
++            if (blacklistedApps.removeAll(AUTO_EXCLUDED_HIDDEN_APPS)) {
++                prefs.edit { putStringSet(PREF_KEY_BACKUP_APP_BLACKLIST, blacklistedApps) }
++            }
++            prefs.edit { putBoolean(PREF_KEY_HUNG_APPS_RESTORED, true) }
++        }
++    }
++
+     @Volatile
+     var token: Long? = null
+         private set(newToken) {
+diff --git a/app/src/main/java/com/stevesoltys/seedvault/ui/notification/NotificationBackupObserver.kt b/app/src/main/java/com/stevesoltys/seedvault/ui/notification/NotificationBackupObserver.kt
+index c25e7459..9a446714 100644
+--- a/app/src/main/java/com/stevesoltys/seedvault/ui/notification/NotificationBackupObserver.kt
++++ b/app/src/main/java/com/stevesoltys/seedvault/ui/notification/NotificationBackupObserver.kt
+@@ -176,10 +176,11 @@ internal class NotificationBackupObserver(
+             backendManager.canDoBackupNow()
+         ) {
+             // An app hung (e.g. the 5 min full backup timeout) and took its chunk down.
+-            // Don't let it do that every night, and back up the rest of the chunk now.
++            // Back up the rest of the chunk now. The app itself is only skipped for this run:
++            // its backup stays enabled, so a one-off hang doesn't exclude it for good (it may
++            // also be hidden from the app list, where it couldn't be turned back on).
+             abortRetries++
+-            Log.w(TAG, "$culprit aborted its chunk, disabling its backup and retrying the rest")
+-            settingsManager.disableBackup(culprit)
++            Log.w(TAG, "$culprit aborted its chunk, skipping it this run and retrying the rest")
+             if (backupRequester.requestRemaining(done + culprit)) return
+         }
+         if (backupRequester.hasNext && !backendManager.canDoBackupNow()) {
