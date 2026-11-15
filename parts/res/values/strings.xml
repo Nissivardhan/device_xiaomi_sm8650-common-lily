@@ -3,7 +3,7 @@
      Copyright (C) 2026 The LineageOS Project
      SPDX-License-Identifier: Apache-2.0
 -->
-<resources>
+<resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
     <!-- Anti-flicker (DC dimming) quick settings tile -->
     <string name="dc_dimming_title">Anti-flicker</string>
 
@@ -22,4 +22,53 @@
     <string name="seedvault_switch_back">Switch back to Google</string>
     <string name="seedvault_switched_back">Google is your daily backup again.</string>
     <string name="seedvault_switch_failed">Couldn\'t switch the backup service. Try again.</string>
+
+    <!-- Battery health (Settings › Battery) -->
+    <string name="battery_health_title">Battery health</string>
+    <string name="battery_health_summary">Capacity, charge cycles and temperature</string>
+    <string name="battery_health_capacity">Maximum capacity</string>
+    <string name="battery_health_capacity_value"><xliff:g id="percent">%1$d</xliff:g>%% of when new</string>
+    <string name="battery_health_cycles">Charge cycles</string>
+    <string name="battery_health_full">Holds now</string>
+    <string name="battery_health_design">Held when new</string>
+    <string name="battery_health_temperature">Temperature</string>
+    <string name="battery_health_mah"><xliff:g id="mah">%1$d</xliff:g> mAh</string>
+    <string name="battery_health_celsius"><xliff:g id="celsius">%1$.1f</xliff:g> °C</string>
+    <string name="battery_health_unknown">Not available</string>
+    <string name="battery_health_note">Values are reported by the battery itself and settle after a few full charges.</string>
+
+    <!-- Charging control quick settings tile -->
+    <string name="charging_control_tile_title">Charge limit</string>
+    <string name="charging_control_tile_off">Off</string>
+    <string name="charging_control_tile_auto">Full by alarm</string>
+    <string name="charging_control_tile_custom">Scheduled</string>
+    <string name="charging_control_tile_limit">Up to <xliff:g id="percent">%1$d</xliff:g>%%</string>
+
+    <!-- Auto restart when locked (Settings › System) -->
+    <string name="auto_reboot_title">Auto restart when locked</string>
+    <string name="auto_reboot_summary">Restart the phone after it stays locked for a while</string>
+    <string name="auto_reboot_note">After a restart your data stays encrypted until you enter your PIN, pattern or password. The countdown starts when the screen turns off and resets every time you unlock. It waits while you\'re in a call.</string>
+    <string-array name="auto_reboot_entries">
+        <item>Off</item>
+        <item>After 4 hours</item>
+        <item>After 8 hours</item>
+        <item>After 12 hours</item>
+        <item>After 24 hours</item>
+        <item>After 36 hours</item>
+        <item>After 72 hours</item>
+    </string-array>
+    <string-array name="auto_reboot_values" translatable="false">
+        <item>0</item>
+        <item>4</item>
+        <item>8</item>
+        <item>12</item>
+        <item>24</item>
+        <item>36</item>
+        <item>72</item>
+    </string-array>
+
+    <!-- Seedvault status line (Settings › System) -->
+    <string name="seedvault_status_never">No Seedvault backup yet</string>
+    <string name="seedvault_status_ok">Last backup <xliff:g id="when">%1$s</xliff:g></string>
+    <string name="seedvault_status_failed">Last backup failed <xliff:g id="when">%1$s</xliff:g></string>
 </resources>

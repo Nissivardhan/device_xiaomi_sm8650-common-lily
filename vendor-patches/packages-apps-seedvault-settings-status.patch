@@ -1,0 +1,30 @@
+diff --git a/app/src/main/java/com/stevesoltys/seedvault/ui/notification/BackupNotificationManager.kt b/app/src/main/java/com/stevesoltys/seedvault/ui/notification/BackupNotificationManager.kt
+index 3b77e11c..0f3f27eb 100644
+--- a/app/src/main/java/com/stevesoltys/seedvault/ui/notification/BackupNotificationManager.kt
++++ b/app/src/main/java/com/stevesoltys/seedvault/ui/notification/BackupNotificationManager.kt
+@@ -205,7 +205,17 @@ internal class BackupNotificationManager(private val context: Context) {
+         // }
+     }
+ 
++    /** Tells Settings (Xiaomi Parts) how the last backup went, for its status line. */
++    private fun reportBackupResult(success: Boolean) {
++        val intent = Intent("com.xiaomi.settings.action.SEEDVAULT_BACKUP_RESULT")
++            .setPackage("com.xiaomi.settings")
++            .putExtra("success", success)
++            .putExtra("time", System.currentTimeMillis())
++        context.sendBroadcast(intent)
++    }
++
+     fun onBackupSuccess(numBackedUp: Int, total: Int, size: Long) {
++        reportBackupResult(true)
+         val sizeStr = formatShortFileSize(context, size)
+         val contentText =
+             context.getString(R.string.notification_success_text, numBackedUp, total, sizeStr)
+@@ -231,6 +241,7 @@ internal class BackupNotificationManager(private val context: Context) {
+     }
+ 
+     fun onBackupError(meteredNetwork: Boolean = false) {
++        reportBackupResult(false)
+         val intent = Intent(context, SettingsActivity::class.java)
+         val pendingIntent = getActivity(context, 0, intent, FLAG_IMMUTABLE)
+         val actionIntent = Intent(ACTION_TRY_AGAIN).apply { setPackage(context.packageName) }
