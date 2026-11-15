@@ -1,0 +1,41 @@
+From f8510e5931f22b79167c93f8c424b33281c1bd3c Mon Sep 17 00:00:00 2001
+From: Nissivardhan <nissivardhan@users.noreply.github.com>
+Date: Sun, 15 Nov 2026 14:50:43 +0530
+Subject: [PATCH] dolby: allocate enough room for ComponentStore in the C2
+ services
+
+The prebuilt C2 services allocate 264 bytes for
+android::hardware::media::c2::V1_0::utils::ComponentStore, the size it had
+when they were built. The libcodec2_hidl@1.0 in this tree has a larger
+ComponentStore, so its constructor writes past the allocation. The RefBase
+part ends up outside the block, gets overwritten by the next allocation, and
+registerAsService crashes in RefBase::incStrong on about every second boot.
+
+Allocate 512 bytes instead (mov w0, #0x108 -> mov w0, #0x200 before
+operator new) in vendor.dolby.media.c2@1.0-service and dolbycodec2.
+---
+ proprietary/vendor/bin/hw/dolbycodec2         | Bin 15240 -> 15240 bytes
+ .../bin/hw/vendor.dolby.media.c2@1.0-service  | Bin 11256 -> 11256 bytes
+ 2 files changed, 0 insertions(+), 0 deletions(-)
+
+diff --git a/proprietary/vendor/bin/hw/dolbycodec2 b/proprietary/vendor/bin/hw/dolbycodec2
+index 9c41501459292e7c33a977d02a8daf9c686c84e2..ff693517a96de23911bb1903bc3a35833af31f2d 100755
+GIT binary patch
+delta 14
+VcmeAu?<n6eRglqP^EAOvngB0J1`7ZH
+
+delta 14
+VcmeAu?<n6eRgh6}^EAOvngA}31?&I-
+
+diff --git a/proprietary/vendor/bin/hw/vendor.dolby.media.c2@1.0-service b/proprietary/vendor/bin/hw/vendor.dolby.media.c2@1.0-service
+index dda204fc0ce1cde175e52ad5b0d3b89964d77dc6..6423954e431429e60ebd8717d4a3a26b5a0d2f71 100644
+GIT binary patch
+delta 14
+Vcmewn{v&(?t01GpW;Vf3QUEYY1$+Pi
+
+delta 14
+Vcmewn{v&(?t01G|W;Vf3QUEWI1zi9D
+
+-- 
+2.54.0 (Apple Git-157)
+
