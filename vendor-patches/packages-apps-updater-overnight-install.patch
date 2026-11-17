@@ -198,7 +198,7 @@ index 0000000..b9e557c
 +        private const val PREF_NIGHTLY_ID = "nightly_install_id"
 +        private const val NOTIFICATION_ID = 20
 +
-+        const val START_HOUR = 1
++        const val START_HOUR = 0
 +        const val END_HOUR = 5
 +
 +        private const val POLL_MS = 15_000L
@@ -333,7 +333,7 @@ index d181434..22e2d69 100644
      <string name="menu_auto_delete_updates">Auto-delete updates</string>
      <string name="menu_auto_delete_updates_summary">Remove downloaded updates after installation</string>
 +    <string name="menu_auto_install_overnight">Install updates overnight</string>
-+    <string name="menu_auto_install_overnight_summary">Between 1 and 5 am, while charging on Wi-Fi. You restart the phone when it suits you.</string>
++    <string name="menu_auto_install_overnight_summary">Between midnight and 5 am, while charging on Wi-Fi. You restart the phone when it suits you.</string>
 +    <string name="auto_install_done_title">Update installed overnight</string>
 +    <string name="auto_install_done_text">Restart to finish updating to %1$s</string>
      <string name="menu_stream_updates">Stream online updates</string>

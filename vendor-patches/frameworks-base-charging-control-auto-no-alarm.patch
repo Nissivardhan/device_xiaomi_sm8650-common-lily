@@ -1,0 +1,54 @@
+diff --git a/services/core/java/com/android/server/lineage/health/ChargingControlController.java b/services/core/java/com/android/server/lineage/health/ChargingControlController.java
+index bb198be..48ff096 100644
+--- a/services/core/java/com/android/server/lineage/health/ChargingControlController.java
++++ b/services/core/java/com/android/server/lineage/health/ChargingControlController.java
+@@ -357,6 +357,8 @@ public class ChargingControlController extends LineageHealthFeature {
+         long targetTime = 0, startTime = currentTime;
+         int mode = getMode();
+ 
++        // Auto mode falls back to the custom schedule times when no alarm is set.
++        boolean useScheduleTimes = mode == MODE_MANUAL;
+         if (mode == MODE_AUTO) {
+             // Use alarm as the target time. Maybe someday we can use a model.
+             AlarmManager m = mContext.getSystemService(AlarmManager.class);
+@@ -367,16 +369,22 @@ public class ChargingControlController extends LineageHealthFeature {
+             }
+             AlarmManager.AlarmClockInfo alarmClockInfo = m.getNextAlarmClock();
+             if (alarmClockInfo == null) {
+-                // We didn't find an alarm. Clear waiting flags because we can't predict anyway
+-                Log.w(TAG, "No alarm found, auto charging control has no effect");
+-                mChargingNotification.cancel();
+-                return null;
++                // No alarm: use the custom schedule (22:00 to 6:00 unless changed), so the
++                // phone still stops at the limit overnight and is full by the morning.
++                Log.i(TAG, "No alarm found, using the custom schedule times");
++                useScheduleTimes = true;
++            } else {
++                targetTime = alarmClockInfo.getTriggerTime();
++
++                // Start time is 9 hours before the alarm
++                startTime = targetTime - DateUtils.HOUR_IN_MILLIS * 9;
+             }
+-            targetTime = alarmClockInfo.getTriggerTime();
++        } else if (mode != MODE_MANUAL) {
++            Log.e(TAG, "invalid charging control mode " + mode);
++            return null;
++        }
+ 
+-            // Start time is 9 hours before the alarm
+-            startTime = targetTime - DateUtils.HOUR_IN_MILLIS * 9;
+-        } else if (mode == MODE_MANUAL) {
++        if (useScheduleTimes) {
+             // User manually controlled time
+             startTime = getTimeMillisFromSecondOfDay(getStartTime());
+             targetTime = getTimeMillisFromSecondOfDay(getTargetTime());
+@@ -391,9 +399,6 @@ public class ChargingControlController extends LineageHealthFeature {
+                 startTime += DateUtils.DAY_IN_MILLIS;
+                 targetTime += DateUtils.DAY_IN_MILLIS;
+             }
+-        } else {
+-            Log.e(TAG, "invalid charging control mode " + mode);
+-            return null;
+         }
+ 
+         Log.i(TAG, "Got target time " + msToString(mContext, targetTime)
