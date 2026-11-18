@@ -1,0 +1,66 @@
+diff --git a/services/core/java/com/android/server/lineage/health/ChargingControlController.java b/services/core/java/com/android/server/lineage/health/ChargingControlController.java
+index 48ff096..91f94ec 100644
+--- a/services/core/java/com/android/server/lineage/health/ChargingControlController.java
++++ b/services/core/java/com/android/server/lineage/health/ChargingControlController.java
+@@ -18,6 +18,7 @@ import android.net.Uri;
+ import android.os.BatteryManager;
+ import android.os.Handler;
+ import android.os.RemoteException;
++import android.os.SystemClock;
+ import android.os.ServiceManager;
+ import android.text.format.DateUtils;
+ import android.util.Log;
+@@ -77,6 +78,14 @@ public class ChargingControlController extends LineageHealthFeature {
+     private Limit mLimit;
+     private Toggle mToggle;
+ 
++    // While charging waits for the target time, battery updates can be an hour apart, so the
++    // provider would resume charging late. Re-check on a timer instead.
++    private static final long RECHECK_INTERVAL_MS = 10 * DateUtils.MINUTE_IN_MILLIS;
++    private final AlarmManager.OnAlarmListener mRecheckListener = () -> {
++        Log.i(TAG, "Scheduled re-check of charge times");
++        updateChargeControl();
++    };
++
+     public ChargingControlController(Context context, Handler handler) {
+         super(context, handler);
+ 
+@@ -350,6 +359,19 @@ public class ChargingControlController extends LineageHealthFeature {
+         }
+     }
+ 
++    private void scheduleRecheck() {
++        AlarmManager am = mContext.getSystemService(AlarmManager.class);
++        if (am == null) return;
++        am.setExact(AlarmManager.ELAPSED_REALTIME_WAKEUP,
++                SystemClock.elapsedRealtime() + RECHECK_INTERVAL_MS,
++                "ChargingControlRecheck", mRecheckListener, mHandler);
++    }
++
++    private void cancelRecheck() {
++        AlarmManager am = mContext.getSystemService(AlarmManager.class);
++        if (am != null) am.cancel(mRecheckListener);
++    }
++
+     private ChargeTime getChargeTime() {
+         // Get duration to target full time
+         final long currentTime = System.currentTimeMillis();
+@@ -410,6 +432,7 @@ public class ChargingControlController extends LineageHealthFeature {
+     }
+ 
+     protected void updateChargeControl() {
++        cancelRecheck();
+         if (!isEnabled() || mIsControlCancelledOnce || !mIsPowerConnected) {
+             mCurrentProvider.disable();
+             mChargingNotification.cancel();
+@@ -428,6 +451,10 @@ public class ChargingControlController extends LineageHealthFeature {
+         } else {
+             ChargeTime chargeTime = getChargeTime();
+             if (chargeTime != null) {
++                if (mBatteryPct < 100
++                        && System.currentTimeMillis() < chargeTime.getTargetTime()) {
++                    scheduleRecheck();
++                }
+                 if (mCurrentProvider.update(mBatteryPct, chargeTime.getStartTime(),
+                         chargeTime.getTargetTime(), mode)) {
+                     mChargingNotification.post(chargeTime.getTargetTime(),
