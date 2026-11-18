@@ -17,6 +17,7 @@ import android.preference.PreferenceFragment;
 import android.preference.PreferenceScreen;
 
 import com.xiaomi.settings.R;
+import com.xiaomi.settings.utils.ActionBarInsets;
 
 /**
  * Battery health: cycle count, how much charge the battery still holds compared with when it
@@ -28,6 +29,7 @@ public class BatteryHealthActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         if (getActionBar() != null) getActionBar().setDisplayHomeAsUpEnabled(true);
+        ActionBarInsets.apply(this);
         if (savedInstanceState == null) {
             getFragmentManager().beginTransaction()
                     .replace(android.R.id.content, new HealthFragment())

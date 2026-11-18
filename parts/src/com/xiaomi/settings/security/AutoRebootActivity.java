@@ -13,6 +13,7 @@ import android.preference.PreferenceFragment;
 import android.preference.PreferenceScreen;
 
 import com.xiaomi.settings.R;
+import com.xiaomi.settings.utils.ActionBarInsets;
 
 /** Settings › System › Auto restart: Off (default) or a number of hours locked. */
 public class AutoRebootActivity extends Activity {
@@ -21,6 +22,7 @@ public class AutoRebootActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         if (getActionBar() != null) getActionBar().setDisplayHomeAsUpEnabled(true);
+        ActionBarInsets.apply(this);
         if (savedInstanceState == null) {
             getFragmentManager().beginTransaction()
                     .replace(android.R.id.content, new AutoRebootFragment())
